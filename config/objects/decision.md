@@ -11,7 +11,7 @@ version: 1.1
 # Object Type: decision
 
 > [!info] Schema discipline
-> Per [[type-scaffolding]], this object's schema must be designed intentionally and revised via [[iterate-instance-then-propagate-schema]]. V1.1 was derived from three instances created 2026-05-17 ([[../../atlas/decisions/2026-05-15-acme-consulting-direction-reframe]], [[../../atlas/decisions/2026-05-15-acme-consulting-team-restructuring-30-60-90]], [[../../atlas/decisions/2026-05-15-coe-workshops-as-qualification-funnel]]) plus legacy decision notes sampled from the operator's prior vault. Future revisions should follow the same instance-grounded pattern.
+> Per [[type-scaffolding]], this object's schema must be designed intentionally and revised via `iterate-instance-then-propagate-schema`. V1.1 was derived from three instances created 2026-05-17 (`../../atlas/decisions/2026-05-15-acme-consulting-direction-reframe`, `../../atlas/decisions/2026-05-15-acme-consulting-team-restructuring-30-60-90`, `../../atlas/decisions/2026-05-15-coe-workshops-as-qualification-funnel`) plus legacy decision notes sampled from the operator's prior vault. Future revisions should follow the same instance-grounded pattern.
 
 A decision is a choice made — with rationale, sourced to where it was made, with explicit reversal conditions where applicable. Decisions live separately from the meetings that produced them when they're standalone-worthy (strategic, durable, cross-project, or framework-shaping). Routine meeting-level decisions stay inline on the meeting note.
 
@@ -203,9 +203,9 @@ This V1.1 schema deepening derived from:
 
 - Operator instruction, 2026-05-17 Claude Code session (desk-setup project, decision-schema deepening pass following the meeting-schema deepening)
 - Three instances created 2026-05-17 during the meeting-matching pass — the dogfood that surfaced the patterns codified here:
-  - [[../../atlas/decisions/2026-05-15-acme-consulting-direction-reframe]]
-  - [[../../atlas/decisions/2026-05-15-acme-consulting-team-restructuring-30-60-90]]
-  - [[../../atlas/decisions/2026-05-15-coe-workshops-as-qualification-funnel]]
+  - `../../atlas/decisions/2026-05-15-acme-consulting-direction-reframe`
+  - `../../atlas/decisions/2026-05-15-acme-consulting-team-restructuring-30-60-90`
+  - `../../atlas/decisions/2026-05-15-coe-workshops-as-qualification-funnel`
 - Legacy decision notes sampled from the operator's prior vault — surfaced the optional "People Involved" and "Team Memo" body sections, plus the `business:` frontmatter scoping pattern
 - V1.0 stub of this file (2026-05-09 era) — preserved core body sections and matching clause; V1.1 extends with lifecycle table, standalone-worthy criteria, creation workflow paths, confidentiality conventions, and Creating-an-instance workflow
 - [[type-scaffolding]] — schema design discipline

@@ -11,7 +11,7 @@ version: 1.1
 # Object Type: meeting
 
 > [!info] Schema discipline
-> Per [[type-scaffolding]], this object's schema must be designed intentionally and revised via [[iterate-instance-then-propagate-schema]]. V1.1 was derived from an external-coaching meeting dogfood (2026-05). Future revisions should follow the same instance-grounded pattern.
+> Per [[type-scaffolding]], this object's schema must be designed intentionally and revised via `iterate-instance-then-propagate-schema`. V1.1 was derived from an external-coaching meeting dogfood (2026-05). Future revisions should follow the same instance-grounded pattern.
 
 A meeting is a single record of a real interaction with one or more other people. Always traceable to a transcript, a live session, or an operator-direct dictation. The atlas/meetings/ folder is the canonical record of "what was said and decided" — every other zone (atlas/people, atlas/decisions, gtd/inbox, atlas/businesses) draws context from here.
 
@@ -24,14 +24,14 @@ Meetings are atomic notes (one file per meeting). Universal — ships pre-built 
 | Field | Type | Notes |
 |---|---|---|
 | `type` | literal | Must be `meeting` |
-| `date` | `YYYY-MM-DD` | When the meeting occurred (not when the note was written) |
+| `date` | `YYYY-MM-DD` | When the meeting occurred, supported by source metadata or explicit confirmation. Never substitute the import, processing or current date. Unknown dates remain unfilled and are reported as missing context; they prevent finalizing a full meeting record. |
 | `status` | enum | See [§ Lifecycle](#lifecycle) |
 | `meeting-type` | enum | See [§ Meeting-type enum](#meeting-type-enum) |
 | `attendees` | list | Wikilinks for attendees with existing `atlas/people/` notes; plain strings otherwise. See [§ Attendee discipline](#attendee-discipline) |
 | `source` | string or wikilink | Where the meeting record came from. See [§ Source field values](#source-field-values) |
 | `created` | `YYYY-MM-DD` | When the meeting note was created |
 | `last_updated` | `YYYY-MM-DD` | Last edit |
-| `author` | string | `claude` or `operator` |
+| `author` | string | The verified authoring agent/runtime (for example `claude` or `codex`), or `operator` for operator-written records. Never attribute one agent’s work to another. |
 
 ### Optional / contextual fields
 
@@ -63,7 +63,7 @@ The `meeting-type` field captures the **relational context** of the meeting (who
 | `client-1on1` | One-on-one with a single client contact (e.g., operator + Jordan Lee) |
 | `client-group` | Meeting with multiple client team members; collaborative, often recurring (e.g., operator + Acme Corp design team) |
 | `client-session` | Facilitated session WITH a client — workshop, training, presentation (e.g., Acme Corp AI Workshop Executive Group) |
-| `internal-1on1` | One-on-one within the operator's own team / [[acme-consulting]] (e.g., operator + Sam) |
+| `internal-1on1` | One-on-one within the operator's own team / `acme-consulting` (e.g., operator + Sam) |
 | `internal-team` | The operator's team-wide meeting (e.g., Acme Consulting Check-In) |
 | `external` | Meeting with an external party that's not a client — networking, vendor, prospect, peer |
 | `external-coaching` | Recurring coaching session with an external coach or mentor (e.g., operator ↔ Pat Morgan) |
@@ -77,11 +77,11 @@ The `source:` field documents what triggered the meeting note's creation. Common
 
 - `"[[system/transcripts/{slug}]]"` — wikilink to a verbatim transcript that arrived in `system/transcripts/`
 - `granola` — meeting captured by Granola, transcript exists in the granola archive
-- `operator-paste` — operator pasted raw text into a Claude Code session
+- `operator-paste` — operator pasted raw text into an agent session
 - `operator-direct` — operator dictated the meeting in conversation (no transcript)
 - `calendar-event+operator-confirmation` — meeting record built from a calendar event plus operator memory (often used for `did-not-occur` or notes-only meetings)
 
-When `transcript:` is set, `source:` usually points at the same wikilink. When there's no transcript, `source:` records how Claude or the operator built the record.
+When `transcript:` is set, `source:` usually points at the same wikilink. When there's no transcript, `source:` records how the agent or operator built the record.
 
 ## Attendee discipline
 
@@ -90,7 +90,8 @@ Attendees go in frontmatter as a YAML list. Per [[double-entry-knowledge]] and [
 - **Wikilinks** for attendees with existing notes in `atlas/people/` — e.g., `"[[jordan-lee]]"`
 - **Plain strings** for attendees without notes — e.g., `"Pat Morgan"`
 - **Never fabricate wikilinks** to person notes that don't exist. Plain strings upgrade to wikilinks when the person note is later created.
-- **The operator** is always an attendee but does NOT get a self-wikilink (no operator self-note in operating vault; they're the operator, not a tracked person entity).
+- **The operator** is an attendee only when the source or explicit operator confirmation establishes attendance. Owning or importing a recording is not attendance evidence. Do not add a self-wikilink when the vault has no operator self-note.
+- **Unconfirmed presence is not absence.** A person mentioned in a prior conversation, or without a recorded speaker turn, has unknown attendance unless the source resolves it. State an absence only when the source explicitly supports it; otherwise keep attendance unconfirmed in both metadata and prose.
 
 Don't include attendees in the body unless the frontmatter list is incomplete or needs annotation (e.g., legacy practice of listing them under `## Attendees` with role notes). For most meetings, frontmatter is sufficient.
 
@@ -228,7 +229,7 @@ If matching surfaces gaps requiring operator attention (e.g., missing person not
 This V1.1 schema deepening derived from:
 
 - Operator instruction, 2026-05-17 Claude Code session (desk-setup project, meeting-schema dogfood)
-- [[../../atlas/meetings/2026-05-15-acme-consulting-coaching]] — the dogfood meeting note that surfaced all the discipline above (attendee handling for non-vault people, `external-coaching` enum value, optional-section pattern, transient matching-impacts section, confidentiality rule application)
+- `../../atlas/meetings/2026-05-15-acme-consulting-coaching` — the dogfood meeting note that surfaced all the discipline above (attendee handling for non-vault people, `external-coaching` enum value, optional-section pattern, transient matching-impacts section, confidentiality rule application)
 - Legacy meeting notes sampled from the operator's prior vault (2026-01 through 2026-04)
 - [[type-scaffolding]] — schema design discipline (iterate-instance-then-propagate-schema)
 - [[instance-scaffolding]] — conditional-matching pattern for entities without notes yet

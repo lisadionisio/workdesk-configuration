@@ -37,7 +37,7 @@ This is the general constraint; the transcript processor's "Parallel backlog mod
 
 When multiple sources in the same processing batch conflict on the same entity:
 1. Process meetings in chronological order
-2. Document BOTH positions on the entity note with source attribution ("Per [[meeting-1]], Tiger said X. Per [[meeting-2]], Sarah said Y.")
+2. Document BOTH positions on the entity note with source attribution ("Per `meeting-1`, Tiger said X. Per `meeting-2`, Sarah said Y.")
 3. Use the most recent chronological source as the working state, but mark confidence:
    - **Confirmed** (decision-maker stated directly) vs **Reported** (secondhand)
    - **Final** vs **Conditional** ("pending confirmation")
@@ -49,7 +49,7 @@ When multiple sources in the same processing batch conflict on the same entity:
 When processing produces outputs that need operator review, create inbox notifications following these rules:
 - **Inbox is a notification layer, not storage.** The actual note lives in its permanent location (atlas/, intel/). The inbox item is a lightweight pointer with a wikilink to the real note.
 - **Only create inbox notifications for outputs that need operator attention.** Trusted, recurring processes (like meeting note updates to existing company notes) run silently. New note types, new entities, content candidates, and flagged issues get inbox notifications.
-- **Use the correct prefix:** `[ACTION]`, `[REVIEW]`, `[CONTENT]`, `[QUESTION]`, `[AWARENESS]` — see [[inbox-lifecycle]] for the full prefix table.
+- **Use the correct prefix:** `[ACTION]`, `[REVIEW]`, `[CONTENT]`, `[QUESTION]`, `[AWARENESS]`.
 - **Use the locked inbox-item format** — every inbox item opens with an `## Operator review` H2 section + single empty bullet + horizontal rule, directly under the H1 title. See [[inbox-item-format]] for the exact shape.
 - **Never duplicate content between inbox and the real note.** The inbox item has a one-line summary, key points, and a link. The real note has the full content.
 
