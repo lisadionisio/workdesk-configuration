@@ -30,6 +30,7 @@ Every active project must have the 8-item minimum structure (9 for code projects
   - **During review, planning, or context work:** Create an inbox notification with `[ACTION]` prefix: "Project X is missing _brief.md" or "Project X status hasn't been updated since [date]."
   - **During build execution or Night Shift:** Note the gap in the session log for morning review. Do not create inbox notifications mid-execution — that's noise during focused work.
 - During context review or planning work, check the `_status.md` date. If the last update is older than 14 days on an active project, flag it as stale.
+- If the last-update date is missing, invalid, or cannot be interpreted from the source, report freshness as unknown. Flag the missing date for review; do not label the project stale, current, or eligible for closure on that basis.
 
 ## What NOT to do
 

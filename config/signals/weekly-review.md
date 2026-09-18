@@ -25,7 +25,7 @@ End-of-week (or start-of-week, depending on `operator-profile.week-start`) holis
 ## Anchors
 
 - `gtd/actions/next/` and `gtd/actions/waiting/` (status, last-touched)
-- `gtd/projects/*/_status.md`
+- Project status and brief across `gtd/projects/`, `atlas/businesses/*/projects/`, and `atlas/clients/*/projects/`
 - `gtd/recurring/schedules/` (`status: active` AND `next_due <= today + 7d`)
 - `gtd/inbox/` (full backlog)
 - Stale contexts: `1.5 × expected-cadence` exceeded
@@ -43,7 +43,7 @@ End-of-week (or start-of-week, depending on `operator-profile.week-start`) holis
 
 ## Schedule mechanism
 
-`SessionStart` reads `config/state/signals.json`. If `weekly-review.last-fired` is older than 6 days AND the current day matches `operator-profile.week-start` or its predecessor (Sunday/Monday by default), session-entry adds a notice proposing `/weekly-review`. After successful write, skill updates `weekly-review.last-fired` to today.
+`SessionStart` reads `config/state/signals.json`. If `weekly-review.last-fired` is missing, invalid, in the future, or at least seven days old (unless explicitly suppressed), session-entry adds a notice proposing `/weekly-review`. After successful write, skill updates `weekly-review.last-fired` to today.
 
 ## Detection (ad-hoc)
 

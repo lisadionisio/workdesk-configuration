@@ -2,7 +2,7 @@
 # session-entry-scan.sh
 #
 # SessionStart hook. Scans the vault for unprocessed sources and stale
-# signal state, writes config/state/session-entry.md, and emits a
+# signal state, writes host-local session-entry.md, and emits a
 # concise additionalContext payload that core skills consume.
 #
 # Output contract (Claude Code SessionStart hook):
@@ -13,7 +13,15 @@ IFS=$'\n\t'
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VAULT="${CLAUDE_PROJECT_DIR:-$(cd "$DIR/../.." && pwd)}"
-STATE_FILE="$VAULT/config/state/session-entry.md"
+# Generated scans belong to the host, never to Obsidian Sync.
+STATE_FILE="$(python3 - "$VAULT" <<'STATEPY'
+import hashlib, os, sys
+from pathlib import Path
+key = hashlib.sha256(str(Path(sys.argv[1]).resolve()).encode()).hexdigest()[:16]
+base = Path(os.environ.get("WORKDESK_STATE_HOME", str(Path.home()/".local/state/workdesk")))
+print(base/key/"session-entry.md")
+STATEPY
+)"
 SIGNALS_STATE="$VAULT/config/state/signals.json"
 JSON_GET="$DIR/json-get.sh"
 
@@ -56,25 +64,13 @@ fi
 
 # --- check signal staleness ----------------------------------------------
 due_signals=()
-if [[ -f "$SIGNALS_STATE" ]]; then
-  daily_last=$(printf '%s' "$(cat "$SIGNALS_STATE")" | "$JSON_GET" daily-plan.last-fired 2>/dev/null || echo "")
-  weekly_last=$(printf '%s' "$(cat "$SIGNALS_STATE")" | "$JSON_GET" weekly-review.last-fired 2>/dev/null || echo "")
-  vimp_supp=$(printf '%s' "$(cat "$SIGNALS_STATE")" | "$JSON_GET" vault-improvements.suppressed-until 2>/dev/null || echo "")
-
-  if [[ -z "$daily_last" || "$daily_last" < "$today" ]]; then
-    due_signals+=("daily-plan")
-  fi
-
-  dow=$(date '+%u')   # 1=Mon..7=Sun
-  if [[ "$dow" == "1" || "$dow" == "7" ]]; then
-    if [[ -z "$weekly_last" ]] || (( $(date '+%s') - $(date -j -f '%Y-%m-%d' "$weekly_last" '+%s' 2>/dev/null || echo 0) > 518400 )); then
-      due_signals+=("weekly-review")
-    fi
-  fi
-
-  if [[ -n "$vimp_supp" && "$vimp_supp" != "null" && "$vimp_supp" < "$today" ]]; then
-    due_signals+=("vault-improvements")
-  fi
+signal_diagnostic=""
+if due_output="$(python3 "$DIR/signal-due.py" "$SIGNALS_STATE" 2>&1)"; then
+  while IFS= read -r signal; do
+    [[ -n "$signal" ]] && due_signals+=("$signal")
+  done <<< "$due_output"
+else
+  signal_diagnostic="$due_output"
 fi
 
 # --- check for new release (cached 24h, network-tolerant, fail-silent) ----
@@ -128,7 +124,10 @@ fi
 if [[ -n "$update_notice" ]]; then
   ctx+="$update_notice "
 fi
-ctx+="See config/state/session-entry.md for full state."
+if [[ -n "$signal_diagnostic" ]]; then
+  ctx+="Signal readiness unknown: $signal_diagnostic. "
+fi
+ctx+="See $STATE_FILE for host-local scan state. Historical config/state/session-entry.md is not current runtime state."
 
 # Escape for JSON.
 ctx_json=$(printf '%s' "$ctx" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || printf '"%s"' "$ctx")

@@ -8,12 +8,12 @@
     "attendees_present": {
       "type": "array",
       "items": {"type": "string"},
-      "description": "Full names of people who actually spoke or were explicitly addressed in the transcript. Do not include anyone only mentioned in passing."
+      "description": "People whose presence is established by a speaker turn or explicit in-meeting evidence. Preserve names or diarization labels exactly as supported; a first name does not authorize completing a surname. Mention, invitation or assignment alone establishes neither presence nor absence."
     },
     "speaker_resolution_confidence": {
       "type": "string",
       "enum": ["high", "partial", "low"],
-      "description": "high = every speaker's name is in the transcript text. partial = some speakers identified, others ambiguous. low = many unknowns."
+      "description": "high = source labels speakers by name. partial = some identities require inference or remain ambiguous; diarized sources cannot be high. low = identities cannot be reliably resolved. Confidence never supplies missing identity evidence."
     },
     "key_topics": {
       "type": "array",
@@ -31,7 +31,7 @@
       "items": {
         "type": "object",
         "properties": {
-          "decision": {"type": "string", "description": "What was decided, stated in one clear sentence."},
+          "decision": {"type": "string", "description": "An explicitly confirmed decision, preserving conditions and scope. An unaccepted suggestion, proposed price or hypothetical is not a decision."},
           "made_by": {"type": "string", "description": "Person who made or confirmed the decision."},
           "durability": {"type": "string", "enum": ["routine", "durable"], "description": "durable = a policy/strategy decision worth a standalone atlas/decisions note. routine = inline meeting-note decision."}
         },
@@ -43,17 +43,22 @@
       "items": {
         "type": "object",
         "properties": {
-          "description": {"type": "string", "description": "What needs to be done, one sentence imperative."},
-          "owner": {"type": "string", "description": "Person responsible. Use the full name from attendees_present."},
+          "description": {"type": "string", "description": "What needs to be done, preserving conditions and whether this is an unconfirmed assignment rather than an accepted commitment."},
+          "commitment_status": {
+            "type": "string",
+            "enum": ["committed", "assigned-unconfirmed"],
+            "description": "committed only when the source establishes the owner's commitment or acceptance. An explicit assignment/request without established acceptance is assigned-unconfirmed. Do not upgrade assignment to acceptance."
+          },
+          "owner": {"type": "string", "description": "Person responsible as explicitly supported, preserving the known name or speaker label. An owner need not be an attendee. Empty string if unknown; do not infer a surname, presence or acceptance from an assignment."},
           "owner_category": {
             "type": "string",
             "enum": ["operator", "team", "client_team", "client_client", "unknown"],
-            "description": "operator = the operator themselves. team = a member of the operator's own team. client_team = the client's employees. client_client = the client's clients (end customers, prospects). Routes the action: only operator (and team items flagged blocks_operator) reach the operator's GTD surface; all others stay inline on the meeting note."
+            "description": "operator = the operator themselves. team = an established member of the operator's team. client_team = the client's employees. client_client = the client's clients. unknown = identity or affiliation unresolved. An assignment does not prove affiliation. Category does not establish acceptance; read commitment_status before routing."
           },
           "blocks_operator": {"type": "boolean", "description": "Only meaningful when owner_category=team. True if this delegated action is a hard blocker on the operator's own forward progress (they cannot proceed until it's done). Default false — most delegated work does NOT block the operator and should not enter their GTD."},
-          "due": {"type": "string", "description": "Due date if stated, empty string otherwise. ISO format if possible."}
+          "due": {"type": "string", "description": "Due date if stated, empty string otherwise. Convert a relative date to ISO only with a source-supported occurrence date; otherwise preserve the original relative wording."}
         },
-        "required": ["description", "owner", "owner_category"]
+        "required": ["description", "commitment_status", "owner", "owner_category"]
       }
     },
     "key_quotes": {

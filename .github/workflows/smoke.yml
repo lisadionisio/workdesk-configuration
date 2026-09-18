@@ -24,3 +24,28 @@ jobs:
         run: ./tests/update-check-test.sh
       - name: feedback throttle
         run: ./tests/feedback-throttle-test.sh
+      - name: Reliability regression fixtures
+        run: python3 -m unittest discover -s tests -p "test_reliability.py" -v
+      - name: Direct-edit destination parser
+        run: python3 -m unittest discover -s tests -p "test_edit_target_paths.py" -v
+      - name: Source completion and search refresh fixtures
+        run: |
+          python3 -m venv "$RUNNER_TEMP/workdesk-test-runtime"
+          "$RUNNER_TEMP/workdesk-test-runtime/bin/python" -m pip install PyYAML==6.0.3
+          export PATH="$RUNNER_TEMP/workdesk-test-runtime/bin:$PATH"
+          python -m unittest discover -s tests -p "test_complete_transcript.py" -v
+          python -W error::ResourceWarning -m unittest discover -s tests -p "test_refresh_search.py" -v
+      - name: Search chunk verifier unit cases
+        run: node --test tests/test_search_index_verifier.mjs
+      - name: Release archive payload and metadata
+        run: python3 -m unittest discover -s tests -p "test_release_archive.py" -v
+      - name: Extraction response contract and offline transport
+        run: python3 -m unittest discover -s tests -p "test_extraction_contract.py" -v
+      - name: Secret resolver failure handling
+        run: python3 -m unittest discover -s tests -p "test_secret_resolver.py" -v
+      - name: Google wrapper in Bash and Zsh
+        run: |
+          python3 tests/gws-wrapper-test.py
+          python3 -m unittest discover -s tests -p "test_gws_account.py" -v
+          python3 -m unittest discover -s tests -p "test_google_import.py" -v
+          python3 -m unittest discover -s tests -p "test_gemini_import.py" -v

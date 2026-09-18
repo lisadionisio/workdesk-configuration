@@ -43,3 +43,9 @@ in the PR's Test plan; maintainer CI covers the rest.
 - Don't add a `CHANGELOG.md`; release notes are generated at release time.
 - Don't edit `config/VERSION`; the release process owns it.
 - Don't add migrations under `config/scripts/`; they live at repo-root `migrations/`.
+
+## Migration recovery and concurrency
+
+Migrations must be idempotent. Version-named migrations run only when their destination version is newer than the installed version and no newer than the staged release. A successful migration has a hash receipt within staging so an interrupted attempt can resume. An interrupted migration without a success receipt may be rerun and must preserve operator data. Existing versioned migrations include their own precondition/no-op checks.
+
+`check` saves the reviewed target hashes inside staging. `apply` reclassifies current ownership and checks the reviewed hash immediately before each write; it cannot silently accept a later edit through an old resolution. A manually prepared staging tree should include a reviewed-plan.json with these hashes; without it, legacy callers receive only apply-time race checks. Symlink targets require manual reconciliation before writes. Failed partial applies preserve snapshots and current files, retain the old VERSION, and require per-file recovery; do not blindly restore the full directory over newer edits.

@@ -48,7 +48,7 @@ Zones (read from vault):
 - **Actions:** `gtd/actions/next/` (all open next-actions) and `gtd/actions/waiting/` (delegated / waiting-on items — check whether any are now unblocked or need a nudge).
 - due `gtd/recurring/schedules/` items (`status: active` AND `next_due <= today`)
 
-Tools (try if connected per `config/tools/<slug>.md` `connected: true`; degrade silently if not):
+Tools (try if connected per `config/tools/<slug>.md` `connected: true`; record unavailable, not-configured, stale and verified-empty sources separately):
 - **`gws calendar` — scoped per `{scope}`.**
   - When `{scope}` is `own` (default): scope every call to `{email}` (or `primary` if `{email}` is empty), so shared/subscribed calendars are excluded.
     - Today: `gws calendar +agenda --today --calendar {email}`
@@ -72,6 +72,8 @@ Tools (try if connected per `config/tools/<slug>.md` `connected: true`; degrade 
 
 ## Reasoning — focus & GTD triage
 
+Preserve the status of source statements. An intention in a daily note is a candidate, not a confirmed commitment; an incomplete checklist is not proof that an external action remains undone. Cite the source and keep unresolved contradictions visible. Do not invent a due date, owner, completion, client agreement or attendee from context. Proposed prioritization and delegation remain recommendations until explicitly accepted or supported by a current source.
+
 The daily-plan is not a data dump. After gathering all anchors, apply judgment — this is the highest-value part of the signal. The operator is being briefed AND coached to stay focused and sharp.
 
 For every candidate item (calendar prep, project next-step, next-action, `action items` email, waiting-on, inbox), assign a GTD disposition:
@@ -91,7 +93,7 @@ Rules of thumb:
 
 ## Sparse-data fallback chain
 
-Try in order; layers with no data are silently skipped:
+Try in order. Skip verified-empty layers when selecting work, but retain material coverage gaps in the output. An unread, unavailable, not-configured or stale source is not a verified-empty layer.
 
 1. Calendar commitments (today + next `{lookahead}` days, scoped per `{scope}`)
 2. `gtd/actions/next/` (sorted by `parent:` recency)
@@ -101,7 +103,7 @@ Try in order; layers with no data are silently skipped:
 6. Unread inbox items (with backlog warning if >20)
 7. Stale contexts needing attention
 
-If all 7 layers return empty (true cold-start), produce a **setup-oriented plan**: "Nothing scheduled and nothing in next-actions. First steps to seed the vault: …" — never a hollow report.
+If all 7 layers are verified empty (true cold-start), produce a **setup-oriented plan**: "Nothing scheduled and nothing in next-actions. First steps to seed the vault: …" — never a hollow report. If some layers were not checked or could not be read, state the limited coverage and use the available sources; do not declare a cold-start from failed reads.
 
 ## Output
 
@@ -116,6 +118,8 @@ sources: ["[[...]]", "[[...]]"]
 schedule: daily
 ---
 ```
+
+Before the body, include **Coverage** — identify checked sources and their dates/account scopes; state material missing, stale or unavailable inputs. Mark the plan partial when required coverage is incomplete.
 
 Body sections:
 1. **Focus — the 1–3 things that truly require *you* today.** Lead with this. Synthesized via GTD triage (see [Reasoning](#reasoning--focus--gtd-triage)) from everything below. High-impact work only the operator can do.
@@ -154,7 +158,7 @@ If total intake > 20, surface a triage warning as the day's top item.
 
 ### 2. Pull-health check
 
-Read state files from `config/state/pull-{source}.json`:
+Resolve the current host-local state paths from each installed puller's tool guide and runtime configuration. For account-scoped sources, report each configured account separately. Historical `config/state/pull-{source}.json` files below are legacy evidence, not automatically the active checkpoint:
 
 - `config/state/pull-granola.json`
 - `config/state/pull-google.json`
@@ -189,3 +193,9 @@ Surface ad-hoc generation when:
 - **2026-06-09/10 — v1.1→1.2 parameterization.** Operator expanded Phase 2 (own-calendar-only scoping, today+7d lookahead, 7d daily-note lookback, an action-email-label pull, multi-location project scan across `gtd/`+`atlas/clients/`+`atlas/businesses/`, `gtd/actions/waiting/` check, and GTD do/prioritize/delegate/defer/delete triage with a leading Focus section). Initially hardcoded the operator's values into the signal; refactored so the generalized logic ships upstream and the operator-specific values (`email`, scope, windows, label) live in `operator-profile.daily-plan` with defaults. This is the same pattern as `week-start`/`role`/`work-mode` — signals read operator-owned prefs from the profile, which `/update` preserves.
 - **gws gmail metadata quirk.** When fetching message metadata, pass `userId:"me"` and `format:"metadata"` only — do NOT pass a `metadataHeaders` array; it breaks the gws request and returns empty headers. Parse all `payload.headers` and filter Subject/From/Date in code.
 - **Label-name reality.** The operator's "action items" label is literally named `Actions` (a parallel `Waiting` label also exists). Don't assume a label's display name from how the operator refers to it — list labels (`gws gmail users labels list`) to confirm the exact name. Now read from `operator-profile.daily-plan.action-email-label`.
+
+## Coverage and unresolved questions
+
+For each source, retain what was read, the time window, the result and any observed error. Distinguish available, verified-empty, not-configured, unavailable, not-checked and stale. Include a compact Coverage summary with material gaps and recovery steps where known. A missing supplied input or an out-of-scope read is not a failed provider request. Never attribute a local action, waiting, project or inbox omission to a calendar/CRM/search outage unless an actual dependency and failure are established. Continue authorized local reads independently. Do not infer no commitments from a failed read or invent its cause.
+
+An unresolved QUESTION remains active regardless of age. Archive only after a sourced resolution or explicit operator dismissal; preserve the resolution and its link. Age never resolves a truth conflict.

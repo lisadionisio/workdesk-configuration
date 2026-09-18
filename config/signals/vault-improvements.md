@@ -60,3 +60,5 @@ Surface ad-hoc generation when:
 ## ## Learnings
 
 (Empty.)
+
+Missing or corrupt signal state is an explicit readiness failure; do not invent an installation date or silently drop the initial suppression period. Repair state from verified installation evidence. Dates use `YYYY-MM-DD`; legacy ISO datetimes are normalized to their date for cadence checks.

@@ -22,6 +22,7 @@
 #   migrations/      -> the actual migration scripts
 
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 IFS=$'\n\t'
 
 # ---- Constants ----------------------------------------------------------------
@@ -151,7 +152,8 @@ EOF
   local new_wd="$extracted/workdesk"
   [[ -d "$new_wd" ]] || fail "Tarball missing 'workdesk/' directory. Release format wrong."
 
-  build_plan "$cur" "$new_version" "$extracted"
+  build_plan "$cur" "$new_version" "$extracted" > "$extracted/reviewed-plan.json"
+  cat "$extracted/reviewed-plan.json"
 }
 
 # Build and emit the plan as JSON, given the current version, new version,
@@ -191,9 +193,11 @@ print(json.dumps(m.get('migrations', [])))
     [[ -z "$path" ]] && continue
     local op="$WD/$path"  def="$DEFAULTS/$path"  new="$new_wd/$path"
     local action
-    action=$(classify "$op" "$def" "$new")
+    if [[ -L "$op" ]]; then action=manual; else action=$(classify "$op" "$def" "$new"); fi
     if (( first )); then first=0; else printf ',\n'; fi
-    printf '    %s:{"action":"%s"}' "$(json_escape "$path")" "$action"
+    local reviewed_hash=null
+    [[ -f "$op" ]] && reviewed_hash="\"$(sha256_file "$op")\""
+    printf '    %s:{"action":"%s","operator_sha256":%s}' "$(json_escape "$path")" "$action" "$reviewed_hash"
   done <<< "$all"
 
   printf '\n  }\n}\n'
@@ -243,9 +247,13 @@ cmd_apply() {
   [[ -n "$resolutions" && -f "$resolutions" ]] || fail "apply: resolutions file missing."
   require rsync
   require python3
+  mkdir -p "$TMP_BASE"
 
   local new_wd="$staging/workdesk"
   [[ -d "$new_wd" ]] || fail "apply: staging missing workdesk/ subdirectory."
+
+  local prior_version
+  prior_version="$(current_version)"
 
   # Determine new version: prefer manifest.json, fall back to staging/VERSION.
   local new_version="unknown"
@@ -258,8 +266,9 @@ cmd_apply() {
   # 1. Backup config/ outside the directory to avoid recursion.
   mkdir -p "$BACKUP_BASE"
   local backup_id
-  backup_id="$(date '+%Y-%m-%d-%H%M%S')"
-  local backup="$BACKUP_BASE/$backup_id"
+  local backup
+  backup="$(mktemp -d "$BACKUP_BASE/$(date '+%Y-%m-%d-%H%M%S')-XXXXXX")"
+  backup_id="$(basename "$backup")"
   rsync -a "$WD/" "$backup/" || fail "Backup failed. Aborting before any writes."
   log "Backup created: $backup"
 
@@ -270,27 +279,42 @@ cmd_apply() {
 
   # 3. Apply each file according to plan + resolutions.
   local rc=0
-  python3 - "$plan_json" "$resolutions" "$WD" "$new_wd" "$backup_id" <<'PYEOF' || rc=$?
-import json, os, shutil, sys
-plan_path, res_path, wd, new_wd, backup_id = sys.argv[1:6]
+  python3 - "$plan_json" "$resolutions" "$WD" "$new_wd" "$backup_id" "$(dirname "${BASH_SOURCE[0]}")/checked-file-copy.py" <<'PYEOF' || rc=$?
+import json, os, shutil, sys, importlib.util
+plan_path, res_path, wd, new_wd, backup_id, primitive = sys.argv[1:7]
+spec = importlib.util.spec_from_file_location("checked_copy", primitive)
+checked = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(checked)
 plan = json.load(open(plan_path))
 res  = json.load(open(res_path))
+review_path = os.path.join(os.path.dirname(new_wd), "reviewed-plan.json")
+reviewed = json.load(open(review_path))["files"] if os.path.isfile(review_path) else plan["files"]
 
-def copy(src, dst):
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    shutil.copy2(src, dst)
+def copy(src, dst, expected):
+    try:
+        checked.checked_copy(src, dst, expected)
+    except (checked.ChangedTarget, OSError) as exc:
+        sys.stderr.write(str(exc) + "\n")
+        sys.exit(3)
 
+manual = [path for path, info in plan["files"].items() if info["action"] == "manual"]
+if manual:
+    sys.stderr.write("Symlink targets require manual reconciliation before any writes: " + ", ".join(manual) + "\n")
+    sys.exit(3)
 problems = []
 for path, info in plan["files"].items():
+    if path == "VERSION":
+        continue  # Version advances only after every file and migration succeeds.
     action = info["action"]
+    expected = reviewed.get(path, {}).get("operator_sha256")
     op_p  = os.path.join(wd, path)
     new_p = os.path.join(new_wd, path)
     if action == "no-op":
         continue
     elif action == "clean-update":
-        copy(new_p, op_p)
+        copy(new_p, op_p, expected)
     elif action == "add":
-        copy(new_p, op_p)
+        copy(new_p, op_p, expected)
     elif action == "conflict":
         r = res.get(path)
         if not r:
@@ -300,13 +324,13 @@ for path, info in plan["files"].items():
         if kind == "mine":
             pass
         elif kind == "theirs":
-            copy(new_p, op_p)
+            copy(new_p, op_p, expected)
         elif kind == "merged":
             mp = r.get("merged_path")
             if not mp or not os.path.isfile(mp):
                 problems.append(f"merged_path missing for {path}")
                 continue
-            copy(mp, op_p)
+            copy(mp, op_p, expected)
         else:
             problems.append(f"unknown resolution '{kind}' for {path}")
     elif action == "removed-in-release":
@@ -319,7 +343,7 @@ for path, info in plan["files"].items():
         # default to keeping deletion unless operator opted in via resolutions.
         r = res.get(path, {})
         if r.get("resolution") == "theirs":
-            copy(new_p, op_p)
+            copy(new_p, op_p, expected)
     elif action == "operator-only":
         pass
 
@@ -327,29 +351,49 @@ if problems:
     sys.stderr.write("APPLY ERRORS:\n  " + "\n  ".join(problems) + "\n")
     sys.exit(2)
 PYEOF
+  if (( rc == 3 )); then
+    fail "File apply stopped; preserve current files and backup $backup_id. Resolve the partial installation before retrying. No blanket restore was performed because another writer may have changed a target."
+  fi
   if (( rc != 0 )); then
-    log "Apply failed. Restoring from backup $backup_id..."
-    rsync -a --delete "$backup/" "$WD/" || log "WARNING: restore failed; backup preserved at $backup"
-    fail "Apply aborted. Original state restored."
+    fail "Apply aborted; backup $backup_id preserved. Version was not advanced. Reconcile changed files before per-file recovery; do not blanket-restore over concurrent edits."
   fi
 
   # 4. Run schema migrations from the staged release.
   if [[ -f "$staging/manifest.json" ]]; then
     local migrations_csv
-    migrations_csv=$(python3 -c "
-import json
-m=json.load(open('$staging/manifest.json')).get('migrations', [])
-print('\n'.join(m))
-")
+    migrations_csv=$(python3 - "$staging/manifest.json" "$prior_version" "$new_version" <<'PYMIG'
+import json,re,sys
+manifest,prior,new = sys.argv[1:]
+def version(value):
+    return tuple(int(x) for x in value.split('.'))
+selected=[]
+for name in json.load(open(manifest)).get('migrations',[]):
+    if '/' in name or '\\' in name or name in ('.','..'):
+        raise ValueError('Migration must be a filename within staging/migrations')
+    match=re.match(r'^\d+\.\d+\.\d+-to-(\d+\.\d+\.\d+)-',name)
+    if match and not (version(prior) < version(match[1]) <= version(new)):
+        continue
+    selected.append(name)
+print('\n'.join(selected))
+PYMIG
+)
     while IFS= read -r script; do
       [[ -z "$script" ]] && continue
       local script_path="$staging/migrations/$script"
       [[ -f "$script_path" ]] || fail "Migration script not found: migrations/$script"
+      local migration_hash receipt_dir
+      migration_hash="$(sha256_file "$script_path")"
+      receipt_dir="$staging/completed-migrations"
+      if [[ -f "$receipt_dir/$script" && "$(cat "$receipt_dir/$script")" == "$migration_hash" ]]; then
+        log "Migration already completed in this staged attempt: $script"
+        continue
+      fi
       log "Running migration: $script"
       WORKDESK_VAULT="$VAULT" WORKDESK_WD="$WD" bash "$script_path" \
-        || { log "Migration failed: $script. Restoring..."
-             rsync -a --delete "$backup/" "$WD/" || log "WARNING: restore failed."
-             fail "Migration aborted. Original state restored." ; }
+        || { log "Migration failed: $script. Preserving partial state..."
+             fail "Migration aborted; backup $backup_id preserved and version not advanced. Reconcile partial state before per-file recovery." ; }
+      mkdir -p "$receipt_dir"
+      printf '%s\n' "$migration_hash" > "$receipt_dir/$script"
     done <<< "$migrations_csv"
   fi
 
@@ -397,7 +441,51 @@ cmd_restore() {
 
 # ---- dispatch -----------------------------------------------------------------
 
+cmd_source_runtime() {
+  [[ $# -le 1 && ( $# -eq 0 || "$1" == "--apply" ) ]] || fail "source-runtime accepts only --apply"
+  require python3
+  python3 - "${1:-}" <<'PYRUNTIME'
+import json, os, platform, subprocess, sys
+from pathlib import Path
+
+apply = sys.argv[1] == '--apply'
+version = '6.0.3'
+base = Path.home() / '.local/share/workdesk/runtimes'
+target = base / ('source-processing-py' + str(sys.version_info.major) + '.' + str(sys.version_info.minor) + '-yaml' + version)
+for path in [target, *target.parents]:
+    if path.is_symlink():
+        raise SystemExit('Runtime path contains a symlink; reconcile before installation')
+python = target / 'bin/python3'
+receipt = target / 'workdesk-runtime.json'
+status = 'create'
+if target.exists():
+    if not python.is_file() or not receipt.is_file():
+        raise SystemExit('Existing runtime is incomplete; preserve it and reconcile before retrying')
+    saved = json.loads(receipt.read_text())
+    probe = subprocess.run([str(python), '-c', 'import yaml; print(yaml.__version__)'], capture_output=True, text=True)
+    if probe.returncode or probe.stdout.strip() != version or saved.get('package') != 'PyYAML==' + version:
+        raise SystemExit('Existing runtime does not match its required dependency; reconcile without overwriting')
+    status = 'ready'
+plan = {'status': status, 'python': str(python), 'package': 'PyYAML==' + version,
+        'scope': 'host-local isolated runtime; no vault or global agent config changes'}
+if apply and status == 'create':
+    base.mkdir(parents=True, exist_ok=True)
+    target.mkdir(mode=0o700)
+    subprocess.run([str(Path(sys.executable).resolve()), '-m', 'venv', '--symlinks', str(target)], check=True)
+    subprocess.run([str(python), '-m', 'pip', '--isolated', 'install', '--disable-pip-version-check',
+                    '--no-cache-dir', '--only-binary=:all:', 'PyYAML==' + version], check=True)
+    subprocess.run([str(python), '-c', 'import yaml; assert yaml.__version__ == "6.0.3"'], check=True)
+    saved = dict(plan, status='ready', base_python=sys.version, platform=platform.platform())
+    receipt.write_text(json.dumps(saved, indent=2) + '\n')
+    os.chmod(receipt, 0o600)
+    plan['status'] = 'ready'
+print(json.dumps(plan))
+PYRUNTIME
+}
+
 case "${1:-}" in
+  source-runtime) shift; cmd_source_runtime "$@" ;;
+  private-overlay) shift; python3 "$(dirname "${BASH_SOURCE[0]}")/apply-private-config.py" --vault "$VAULT" "$@" ;;
   check)   shift; cmd_check   "$@" ;;
   apply)   shift; cmd_apply   "$@" ;;
   restore) shift; cmd_restore "$@" ;;
@@ -406,12 +494,21 @@ case "${1:-}" in
 migrate.sh — WorkDesk OS update engine.
 
 Usage:
+  migrate.sh source-runtime [--apply]
+      Review or prepare the isolated host-local Python runtime for source completion.
+      Existing mismatched or partial environments are preserved for reconciliation.
+
   migrate.sh check
       Fetch latest release, verify SHA256, extract to staging, output plan JSON.
 
   migrate.sh apply <staging-dir> <resolutions.json>
       Backup, apply files (with conflict resolutions), run schema migrations,
       finalize atomically. <staging-dir> is the path emitted by 'check'.
+
+  migrate.sh private-overlay <package-dir> [--apply]
+      Review/apply enumerated private config without changing product defaults or VERSION.
+  migrate.sh private-overlay <receipt.json> --restore-file <path> --apply
+      Restore one existing-file snapshot after checking the installed hash.
 
   migrate.sh restore <backup-id>
       Roll back config/ to a prior backup at \$VAULT/.workdesk-backups/<id>/.

@@ -1,6 +1,6 @@
 # Source Processing Pattern
 
-Every processed source produces one primary synthesis note. From the primary, secondary artifacts are extracted as the source's content warrants. Inbox notifications fire only when the synthesis identifies an application or contradiction worth operator attention. This pattern applies to every source-kind — bookmarks, transcripts, session-logs, future kinds — so processing stays consistent across the vault.
+Every substantive processed source produces one primary synthesis note. A source with no usable content receives an explicit no-content disposition and source-grounded reason, preserving the raw source without inventing a synthesis, meeting or commitment. From a substantive primary, secondary artifacts are extracted as the source's content warrants. Inbox notifications fire only when the synthesis identifies an application or contradiction worth operator attention. This pattern applies to every source-kind — bookmarks, transcripts, session-logs, future kinds — so processing stays consistent across the vault.
 
 ## When this applies
 
@@ -11,7 +11,7 @@ Every processed source produces one primary synthesis note. From the primary, se
 ## The pattern
 
 ```
-1 source  →  1 primary synthesis note          (always; location depends on kind)
+1 substantive source → 1 primary synthesis note (location depends on kind)
               + 0..n quotes                     (gtd/reference/quotes/)
               + 0..n concepts                   (intel/concepts/)
               + 0..n atlas-object updates       (atlas/people/, atlas/decisions/, atlas/meetings/)
@@ -19,7 +19,7 @@ Every processed source produces one primary synthesis note. From the primary, se
               + 0..1 review notification        (gtd/inbox/ with [REVIEW])
 ```
 
-The synthesis is the coherent unit the operator (or future Claude sessions) will revisit. Secondaries are referenced from it. Notifications fire only when the synthesis warrants operator review.
+The synthesis is the coherent unit the operator or future agent sessions will revisit. Secondaries are referenced from it. Notifications fire only when the synthesis warrants operator review. A verified no-content disposition is the exception to synthesis creation, not permission to skip substantive sources.
 
 ## Step-by-step
 
@@ -41,15 +41,15 @@ Location depends on source-kind:
 
 | Source kind | Synthesis location | Reason |
 |---|---|---|
-| External content the operator consumed (bookmark, article, video) | `intel/syntheses/{date}-{slug}.md` | Claude is doing the synthesizing; intel is Claude's zone. |
+| External content the operator consumed (bookmark, article, video) | `intel/syntheses/{date}-{slug}.md` | Agent synthesis belongs in intel; attribute it to the actual authoring runtime. |
 | Interaction the operator was in (transcript, meeting, call) | `atlas/meetings/{date}-{slug}.md` | The meeting note IS the synthesis for a meeting. |
 | Operator's own session/work (session-log, journal) | `system/session-log/{slug}.md` | Operator-shaped; lives where the raw was captured. |
 
 The synthesis is a single note that:
 - States what the source is, in one sentence
 - Identifies whether it applies to anything in the vault — and if so, how, specifically
-- Captures the operator's takeaway in operator's voice (or "no clear takeaway" if there isn't one)
-- Notes any contradictions with existing vault content (with Claude's unbiased take)
+- Captures an operator takeaway only when the source or operator supplied it; distinguish the agent's interpretation from the operator's view
+- Notes any contradictions with existing vault content, with the actual agent's analysis labeled as analysis
 - Links back to the source via `[[source-slug]]`
 - Lists any secondaries produced by this processing pass
 
@@ -103,7 +103,7 @@ Otherwise, no notification. Pure quotes, generic-interest synthesis, "doesn't ap
 When a source contradicts existing vault content:
 
 - Flag the contradiction explicitly in the synthesis: *"This conflicts with `[[decision-Y]]` from `[[meeting-Z]]`."*
-- Give Claude's unbiased take. Use research where appropriate (e.g., "Recent industry data suggests X is now more nuanced than the original decision assumed."). Cite sources.
+- Give the authoring agent's analysis, labeled separately from source facts. Use research where appropriate and cite sources.
 - Do NOT silently overwrite or ignore the prior content. The contradiction is information.
 - Surface a `[REVIEW]` inbox notification — contradictions always warrant operator attention.
 
@@ -113,22 +113,23 @@ Before closing the processing pass:
 
 - [[matching]]: every entity with substantive new info gets its note updated in this same pass. Don't defer.
 - [[source-documentation]]: every produced note traces to the source via wikilink chain. Provenance preserved.
+- Parse every required machine-readable receipt or manifest with its actual format parser before claiming completion. For JSON, require the entire file to parse as the requested object; trailing markup or a parseable prefix is not valid. Inspect the final response against the same sources as the stored notes: a correct note does not excuse an unsupported claim in the handoff.
 
 When processing fans out across parallel workers (see [[matching]] § Parallel source processing), shared-note updates are deferred as durable findings and applied by a single consolidation writer — but the run is not complete, and a source is not archived, until consolidation and verification have finished. A source landing in its archive folder is not by itself proof of completion.
 
-### 8. Move source to its archive folder
+### 8. Verify and finalize source completion
 
-After all artifacts are produced and cross-linked:
+After all required artifacts are produced, cross-linked and verified:
 
-- Set `processed: true` in the source's frontmatter.
-- Populate `processed-into:` with wikilinks to every produced note.
-- Move the source file from `system/intake/` to its source-kind's archive folder (e.g., `system/bookmarks/`, `system/transcripts/`).
-- If the source has an external API for "marked-as-processed" sync (e.g., `keep-markdown processed <id>`), call it now.
+- Use the source-kind's supported completion procedure. Transcripts use the helper specified by the transcript workflow, including its source snapshot and receipt verification; do not hand-author a substitute completion receipt.
+- Preserve source identity and original bytes. Archive without overwriting an existing source, then verify output links and source references at their final locations before finalizing `processed: true` and `processed-into:`. Revalidate the resulting completion record and current files. An interrupted archive or a true flag alone is not proof of completion.
+- For a no-content source, record the reviewed disposition and reason through the supported procedure without creating downstream knowledge notes.
+- If the source-kind requires external processed-state synchronization, verify that operation too. A failure leaves that required substep pending and prevents an overall success claim; retain verified local outputs and resume the missing substep rather than recreating them.
 
 ## What NOT to do
 
 - Don't extract every possible artifact type on every source. Extract only what content warrants.
-- Don't skip the synthesis. Even when no application is identified, the synthesis exists — its content is "no clear application" with the source link. The synthesis is the audit trail of "Claude looked at this."
+- Don't skip the synthesis for a substantive source. Even when no application is identified, retain "no clear application" with its source link. Truly contentless sources use the explicit no-content disposition instead.
 - Don't fire a `[REVIEW]` notification just because something was processed. Notifications are for application/contradiction/project-candidate signals only. Routine processing runs silently.
 - Don't write to `personal/`. Vault-aware reading includes `personal/`, but writes never go there. If a source produces personal-shaped content, route to `gtd/inbox/` with `[REVIEW]` and let the operator move it themselves.
 - Don't bypass [[matching]] or [[source-documentation]]. Every entity gets its update; every produced note traces to its source.

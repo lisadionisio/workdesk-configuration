@@ -3,9 +3,9 @@ type: source-declaration
 name: transcript
 zone: system
 location: system/transcripts/
-naming: "{YYYY-MM-DD}-{topic-slug}"
+naming: "{YYYY-MM-DD-or-undated}-{topic-slug}"
 move-after-processing: false
-version: 1.0
+version: 1.1
 ---
 
 # Source: transcript
@@ -25,6 +25,14 @@ processed-into: []
 ```
 
 Body: verbatim transcript text.
+
+`date` is the meeting occurrence date, not the import date. If that date is
+unknown, preserve the raw source with `date: null` and an `undated-` filename;
+`pulled-at` may separately record retrieval time. A document-only Gemini pull
+has no calendar context, so it leaves `event-start` and `event-organizer` null.
+Resolve the occurrence date from source evidence or explicit operator input
+before creating a complete dated meeting record. Do not infer it from the
+filename of an undated source, retrieval time or document modification time.
 
 ## Processing rule
 

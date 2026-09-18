@@ -4,7 +4,7 @@ Every note must have both content and connections. A note without links is singl
 
 ## When this applies
 
-- Creating any new note in `atlas/`, `intel/`, or `system/claude-log/`
+- Creating any new note in `atlas/`, `intel/`, or `system/session-log/`
 - Processing a transcript, meeting, or communication into vault notes
 - Updating an existing note with new information
 - Routing captures from the daily note to permanent locations
@@ -17,6 +17,7 @@ Every note must have both content and connections. A note without links is singl
   1. Are all entities (people, companies, projects) linked?
   2. Does the note link to related notes that provide context?
   3. Would someone reading only the graph connections understand what this note relates to?
+  4. Run `bash config/scripts/check-wikilinks.sh --require-links <created-or-updated-knowledge-notes>`. Zero scanned references is a failure for a knowledge note, not a passing connection check. Check raw sources separately without this option; do not fabricate a link to make the check pass.
 - Source provenance (where the knowledge came from) is enforced by the Source Documentation rule, not this one. This rule enforces connections between notes.
 
 ## What NOT to do

@@ -18,3 +18,7 @@ dist/
 /config/infisical/templates/gws-encryption-key.tmpl
 /config/infisical/templates/gws-credentials-b64.tmpl
 /config/infisical/templates/gws-accounts-json.tmpl
+
+# Python-derived runtime cache is not configuration.
+__pycache__/
+*.pyc

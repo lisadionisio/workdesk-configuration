@@ -15,10 +15,10 @@
 #   bash config/scripts/extract-transcript-gemini.sh <transcript-path> [--model <id>]
 #
 # Exit codes:
-#   0  success — valid JSON on stdout
+#   0  success — complete, structurally validated extraction JSON on stdout
 #   1  Gemini API returned an error (rate limit, malformed request, etc.)
 #   2  hard failure (auth, bad args, transcript not readable)
-#   3  Gemini returned output that doesn't parse as JSON
+#   3  incomplete provider response or invalid extraction JSON contract
 
 set -uo pipefail
 
@@ -26,15 +26,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=config/scripts/lib/resolve-secret.sh
 source "$SCRIPT_DIR/lib/resolve-secret.sh"
 VAULT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-SKILL_DIR="$VAULT_ROOT/.claude/skills/process-transcripts"
+SKILL_DIR="$VAULT_ROOT/config/skills/process-transcripts"
 PROMPT_FILE="$SKILL_DIR/prompt.txt"
 SCHEMA_FILE="$SKILL_DIR/schema.json"
+VALIDATOR="$SCRIPT_DIR/validate-extraction.py"
 MODEL="gemini-3.1-flash-lite"
 TRANSCRIPT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --model) MODEL="$2"; shift 2 ;;
+    --model)
+      if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
+        echo "ERROR: --model requires an ID" >&2; exit 2
+      fi
+      MODEL="$2"; shift 2 ;;
     --help|-h)
       sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
@@ -52,6 +57,13 @@ if [[ ! -r "$PROMPT_FILE" ]]; then
 fi
 if [[ ! -r "$SCHEMA_FILE" ]]; then
   echo "ERROR: schema missing: $SCHEMA_FILE" >&2
+  exit 2
+fi
+
+SCHEMA_BODY="$(cat "$SCHEMA_FILE")"
+if ! command -v python3 >/dev/null || [[ ! -r "$VALIDATOR" ]] || \
+   ! python3 "$VALIDATOR" --schema-json "$SCHEMA_BODY" --check-schema; then
+  echo "ERROR: extraction validator or schema unavailable/unsupported" >&2
   exit 2
 fi
 
@@ -75,8 +87,15 @@ operator_name="$(
 if [[ -n "$operator_name" ]]; then
   PROMPT_BODY+=$'\n'"The operator's name is: ${operator_name}."
 fi
-SCHEMA_BODY="$(cat "$SCHEMA_FILE")"
-TRANSCRIPT_BODY="$(awk '/^---$/{c++; next} c>=2 {print}' "$TRANSCRIPT")"
+if ! TRANSCRIPT_BODY="$(awk '
+  NR == 1 { if ($0 !~ /^---\r?$/) exit 2; next }
+  !body { if ($0 ~ /^---\r?$/) body=1; next }
+  { print }
+  END { if (!body) exit 2 }
+' "$TRANSCRIPT")"; then
+  echo "ERROR: transcript requires complete leading frontmatter" >&2
+  exit 2
+fi
 
 if [[ -z "$TRANSCRIPT_BODY" ]]; then
   echo "ERROR: transcript body is empty (no content after frontmatter)" >&2
@@ -84,7 +103,7 @@ if [[ -z "$TRANSCRIPT_BODY" ]]; then
 fi
 
 # Build request
-REQUEST=$(jq -n \
+if ! REQUEST=$(jq -n \
   --arg prompt "$PROMPT_BODY" \
   --arg transcript "$TRANSCRIPT_BODY" \
   --argjson schema "$SCHEMA_BODY" \
@@ -98,16 +117,25 @@ REQUEST=$(jq -n \
       temperature: 0.2,
       maxOutputTokens: 8192
     }
-  }')
+  }'); then
+  echo "ERROR: unable to build extraction request" >&2
+  exit 2
+fi
 
 # Call Gemini
-RESPONSE_FILE="$(mktemp)"
+if ! RESPONSE_FILE="$(mktemp)"; then
+  echo "ERROR: unable to allocate provider response file" >&2
+  exit 2
+fi
 trap 'rm -f "$RESPONSE_FILE"' EXIT
 
-HTTP_CODE=$(curl -sS -o "$RESPONSE_FILE" -w '%{http_code}' \
+if ! HTTP_CODE=$(curl -sS --connect-timeout 15 --max-time 120 -o "$RESPONSE_FILE" -w '%{http_code}' \
   "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent?key=$GEMINI_API_KEY" \
   -H 'Content-Type: application/json' \
-  -d "$REQUEST")
+  -d "$REQUEST"); then
+  echo "ERROR: Gemini transport failed" >&2
+  exit 1
+fi
 
 if [[ "$HTTP_CODE" != "200" ]]; then
   echo "ERROR: Gemini HTTP $HTTP_CODE" >&2
@@ -122,20 +150,17 @@ if jq -e '.error' "$RESPONSE_FILE" >/dev/null 2>&1; then
   exit 1
 fi
 
-# Extract structured text from the candidate
-EXTRACTED="$(jq -r '.candidates[0].content.parts[0].text' "$RESPONSE_FILE")"
-
-# Validate JSON parse
-if ! echo "$EXTRACTED" | jq empty 2>/dev/null; then
-  echo "ERROR: Gemini output failed JSON parse" >&2
-  echo "--- raw output (first 1KB): ---" >&2
-  echo "$EXTRACTED" | head -c 1024 >&2
-  echo >&2
+# Validate the provider completion and the bundled schema. This does not prove
+# factual accuracy. Use the same captured schema that was sent in the request.
+if ! EXTRACTED="$(python3 "$VALIDATOR" --schema-json "$SCHEMA_BODY" < "$RESPONSE_FILE")"; then
   exit 3
 fi
 
 # Emit token usage to stderr so caller can log it without polluting JSON stdout
-jq -c '.usageMetadata // {} | {prompt: .promptTokenCount, output: .candidatesTokenCount, total: .totalTokenCount}' "$RESPONSE_FILE" >&2
+jq -c '(.usageMetadata // {}) as $usage | {
+  prompt: $usage.promptTokenCount, output: $usage.candidatesTokenCount,
+  total: $usage.totalTokenCount, modelVersion: .modelVersion, responseId: .responseId
+}' "$RESPONSE_FILE" >&2
 
 # JSON to stdout
 echo "$EXTRACTED"

@@ -1,32 +1,32 @@
 ---
 name: process-transcripts
-description: Process unprocessed transcripts in system/intake/ into atlas/meetings, atlas/decisions, atlas/people updates, and gtd/inbox proposals. Uses Gemini 3.1 Flash Lite as the structured extractor (~$0.002/transcript, 4s latency) and Claude for vault integration (wikilink resolution, matching cross-updates, file ops, verification). Operator-confirmed per transcript. Honors matching, action-item ownership, source-documentation, and the source-processing-pattern intake → process → archive flow.
+description: Process verbatim transcripts into sourced meeting notes, entity updates and ownership-aware action proposals. Uses Gemini extraction followed by agent-led factual review, vault integration and verified completion. Interactive processing requires operator confirmation; batch mode must be explicitly selected.
 ---
 
 # /process-transcripts
 
-Move raw transcripts through the extraction pipeline into structured vault notes. Operator confirms each transcript before processing. Never auto-process in the background.
+Move raw transcripts through the extraction pipeline into structured vault notes. Confirm each transcript in interactive mode; an explicit `--all` request authorizes the selected batch. Unattended processing requires separate workflow acceptance and authorization.
 
 ## Architecture
 
-Two-model pipeline. Gemini does cheap structured extraction; Claude does the vault discipline work that Gemini can't.
+Gemini produces structured extraction. The active integration agent reviews facts, resolves vault references, applies sourced updates and verifies completion using the same files and rules across supported runtimes.
 
 ```
 intake/{slug}.md (verbatim)
         │
         ▼  config/scripts/extract-transcript-gemini.sh
-Gemini 3.1 Flash Lite (~$0.002, ~4s)
-        │  strict JSON schema (.claude/skills/process-transcripts/schema.json)
+Gemini 3.1 Flash Lite (configured extractor)
+        │  strict JSON schema (config/skills/process-transcripts/schema.json)
         │
-        ▼  Claude (Opus or Sonnet via subagent)
+        ▼  Active integration agent (record actual runtime/model)
    • Validate JSON
    • Resolve names → wikilinks (Glob over atlas/people/)
    • Network-scope filter for person notes
    • Write atlas/meetings/{slug}.md
    • Apply matching cross-updates
    • Route action items by owner_category
-   • Move intake → transcripts/
-   • check-wikilinks.sh on every touched file
+   • Review facts and validate output properties/links
+   • Complete intake → transcripts/ through the verified helper
 ```
 
 The Gemini prompt + JSON schema live next to this file:
@@ -34,6 +34,8 @@ The Gemini prompt + JSON schema live next to this file:
 - [`schema.json`](schema.json)
 
 Both are versioned with the skill so changes are auditable.
+
+The extractor loads these canonical `config/skills` resources directly and requires `python3` for its standard-library response validator. Before provider access it rejects unsupported schema vocabulary. On return it requires a normally completed text candidate, a single JSON object, declared fields with the schema's required properties, types and enum values, and no duplicate JSON keys. It combines final text parts and ignores parts explicitly marked as thoughts. This is a structural contract, not factual review; a valid response remains an unverified extraction draft.
 
 ## Invocation
 
@@ -43,7 +45,7 @@ Both are versioned with the skill so changes are auditable.
 
 ## Source location
 
-Per [[../../rules/source-processing-pattern]], unprocessed transcripts live in `system/intake/`. Processed transcripts get moved to `system/transcripts/` (the archive) only after every downstream artifact is produced AND verified. **Never process a transcript that's still in `system/transcripts/`** — that's the post-processing archive; if it's there it's already done.
+Per [[../../rules/source-processing-pattern]], unprocessed transcripts live in `system/intake/`. Processed transcripts get moved to `system/transcripts/` (the archive) only after every downstream artifact is produced AND verified. Archive location alone is not completion evidence. Before retrying an archived source, reconcile its stable source identity, `processed-into` outputs and verification result. Resume only missing work; preserve existing verified notes and commitments. Do not create duplicates.
 
 ## Phases (per transcript)
 
@@ -54,7 +56,9 @@ Read the transcript's frontmatter. Verify:
 - `source-kind: transcript`
 - `source-format` is one of: `granola-public-api`, `google-meet-transcript`, `gemini-meet-transcript`
 
-If `processed: true`, skip.
+If `processed: true`, verify referenced outputs before skipping. Missing or contradictory completion evidence needs reconciliation, not a duplicate extraction.
+
+Separate confirmed attendees, people merely mentioned, and explicit absences. A missing speaker turn or a reference to a prior conversation establishes neither attendance nor absence. When the source does not resolve presence, say attendance is unconfirmed; do not turn that gap into “was not present.” Preserve tentative commercial terms as proposals. An empty recording or voicemail receives an explicit no-content disposition with source provenance, not an invented meeting or commitment. Review relevant recorded learnings before processing.
 
 Pre-load vault context that downstream phases need (do this BEFORE the Gemini call so the wikilink resolution work in Phase 3 is fast):
 - Glob `atlas/people/*.md` — list of person notes for wikilink resolution
@@ -67,16 +71,18 @@ Pre-load vault context that downstream phases need (do this BEFORE the Gemini ca
 Run the extraction script, capturing to a **unique** temp file (never a shared fixed path like `/tmp/extraction.json` — under Parallel backlog mode below, concurrent agents would clobber each other):
 
 ```bash
-EXTRACT_JSON=$(mktemp /tmp/extraction-XXXXXX.json)
+EXTRACT_JSON=$(mktemp "${TMPDIR:-/tmp}/extraction.XXXXXX") || exit 2
 bash config/scripts/extract-transcript-gemini.sh {transcript-path} > "$EXTRACT_JSON"
 ```
 
+Use the runtime's authorized temporary directory. In a confined workspace, set `TMPDIR` to an existing permitted directory before running the example; do not write outside that boundary just because the example has a default. Preserve the extractor's actual exit code before running diagnostic commands.
+
 The script:
-- Reads the prompt from `.claude/skills/process-transcripts/prompt.txt`
-- Reads the schema from `.claude/skills/process-transcripts/schema.json`
+- Reads the prompt from `config/skills/process-transcripts/prompt.txt`
+- Reads the schema from `config/skills/process-transcripts/schema.json`
 - Calls Gemini 3.1 Flash Lite with `responseMimeType: application/json` + `responseSchema`
-- Validates JSON parse
-- Emits token usage to stderr, JSON to stdout
+- Validates provider completion and the extraction JSON contract
+- Emits token usage and reported model/response identifiers to stderr, extraction JSON to stdout
 
 **On failure** (exit non-zero), see § Failure fallback below.
 
@@ -92,6 +98,8 @@ If ANY of these apply, pause and present the Gemini-extracted summary + action i
 For routine transcripts (Google Meet + Gemini high-confidence, work topics, sensitive=false), skip the checkpoint.
 
 ### 4. Wikilink resolution + vault-fit
+
+Treat extraction as a draft. Before writing, compare each proposed attendee, decision, owner, deadline and commercial term with the verbatim source. Record the supporting source span and unresolved qualifications in the existing processing record. Review summary sentences and parentheticals as well as structured arrays: a correct attendee list does not validate an unsupported absence claim in the summary. An exact quote proves where the words came from, not that the proposed conclusion follows. Keep unsupported claims out of factual notes; retain the uncertainty or ask the operator when it prevents completion. JSON parsing and model confidence do not substitute for this review.
 
 Take the extracted JSON and convert names → wikilinks:
 
@@ -114,13 +122,13 @@ Take the extracted JSON and convert names → wikilinks:
 
 ### 5. Write the meeting note
 
-`atlas/meetings/{YYYY-MM-DD}-{topic-slug}.md` per [[../../objects/meeting]]. Build from the extracted JSON:
+`atlas/meetings/{YYYY-MM-DD}-{topic-slug}.md` per [[../../objects/meeting]]. Build from the source-reviewed extraction, not unverified JSON fields:
 
 Required body sections (always present):
-- **Summary** — Gemini's `summary` field
-- **Key Topics** — Gemini's `key_topics[]`
-- **Decisions** — Gemini's `decisions[]` (inline routine ones; durable ones get standalone notes per step 6)
-- **Action Items** — Gemini's `action_items[]` (full record; owner-based routing happens in step 7)
+- **Summary** — source-supported outcome and what changed in this meeting
+- **Key Topics** — reviewed topics with material qualifications preserved
+- **Decisions** — choices actually made, with any stated conditions; distinguish proposals and unresolved choices. If the supplied source establishes no decision, say so within that source's scope. Inline routine decisions; durable ones get standalone notes per step 6.
+- **Action Items** — reviewed commitments and unconfirmed assignments, with known owners and timing (full record; owner-based routing happens in step 7)
 - **Source** — wikilink back to the intake transcript file
 
 Optional sections (only when Gemini's arrays are non-empty):
@@ -128,10 +136,17 @@ Optional sections (only when Gemini's arrays are non-empty):
 - **People Observations** — `people_observations[]`
 - **Open Questions** — `open_questions[]`
 
+When the meeting relates to known work, follow its explicit project/entity links into relevant earlier meetings, decisions, actions and authorized communication records. Add a concise **Related Context** section when those sources explain the meeting's significance: what prior commitment it advances, changes or leaves unresolved, and which project is affected. Cite the specific dated record for each historical claim. Keep this context distinct from what was said or decided in the current transcript. A shared name or topic alone does not establish a relationship; an older note does not prove current status. Surface contradictions with both sources rather than silently choosing one. If relevant history is unavailable, state the limited coverage without treating missing context as proof that no earlier work exists.
+
+Make the next step visible for each affected project when supported by the sources. Distinguish an existing agreed action from an agent's suggested next step; do not convert a suggestion into a commitment, invent an owner or deadline, or close older work merely because this meeting discusses it. Reuse and link existing actions instead of creating duplicates. External communication access still requires the task's authorization; this context pass does not grant permission to contact anyone.
+
 Frontmatter:
+- `date:` is the meeting occurrence date supported by source metadata or explicit confirmation, never today's processing date or an import timestamp. If absent, leave it unknown and record the missing context. A full meeting record cannot be finalized until required context is resolved; a scoped extraction may return the requested known facts without inventing extra metadata or claiming full processing completion. Do not fabricate a date-based filename for an undated source.
+- `created:` and `last_updated:` describe note creation/editing, separate from meeting occurrence.
+- `author:` names the actual verified authoring agent/runtime. Include the operator as an attendee only when their presence is supported by the source; importing a recording does not establish attendance.
 - `sensitive: true` if Gemini flagged it (see [[../../objects/meeting]] § Confidentiality)
 - `attendees:` from `attendees_present[]` (wikilinks where they resolve, plain text otherwise)
-- `transcript:` wikilink to the intake source
+- `transcript:` a quoted wikilink string to the intake source, such as `transcript: "[[system/intake/source]]"`. Bare `[[source]]` is parsed by YAML as a nested list, not a link string. Parse generated frontmatter and check property types before final verification: `transcript` is a string and `attendees` is a list of strings. Link resolution alone does not validate these types.
 
 ### 6. Apply matching
 
@@ -144,6 +159,8 @@ Update each touched entity in the same pass per [[../../rules/matching]]:
 - **Client / business `_status.md`** — substantive new context warrants an update.
 
 ### 7. Route action items by ownership
+
+Read `commitment_status` before routing. Preserve `assigned-unconfirmed` as an assignment awaiting acceptance in the meeting and any related record; never rewrite it as the owner's promise. Establish affiliation independently of the assignment. If affiliation is unresolved, retain the known owner name with category `unknown` and use the ownership clarification route below. An unconfirmed assignment to the operator goes to the inbox as a request to clarify, with that status visible, not as a commitment they already made. A source-supported hard dependency may be tracked as waiting for a response, retaining the unconfirmed status; do not invent the dependency from the assignment alone.
 
 Use Gemini's `owner_category` enum:
 
@@ -163,29 +180,54 @@ The meeting note's `## Action Items` section captures the **full record** — ev
 
 The `[REVIEW]` flood-guard cap (≤7 per session) applies to `[REVIEW]` proposals (uncertain inferences). It does NOT apply to `[ACTION]` items.
 
-### 8. Flip source state and archive
+### 8. Verify outputs before completion
 
-Update intake-file frontmatter:
-- `processed: true`
-- `processed-into:` — list with wikilinks to meeting note + any standalone decisions + any new person notes + any inbox items
+Verify every required meeting, decision, substantive entity update and routed commitment exists, cites the source, and agrees with the source. Check the planned output list against the actual files; a missing required update keeps the run incomplete. No-content sources use an explicit disposition instead of an invented meeting.
 
-Then move the file: `system/intake/{filename}` → `system/transcripts/{filename}` via `mv`. The transcript stays in `system/transcripts/` permanently as the audit trail.
+Obtain the host-local Python path using `bash config/scripts/migrate.sh source-runtime` (runtime preparation is described in step 9). Run the read-only verification below on every created/updated knowledge note, repeating `--output` for each actual path:
 
-### 9. Verify
+```bash
+"<runtime-python>" config/scripts/complete-transcript.py \
+  --vault "$PWD" --verify-extraction \
+  --source "system/intake/<source>.md" \
+  --output "atlas/meetings/<meeting>.md"
+```
 
-Run `bash config/scripts/check-wikilinks.sh` on:
-- The new meeting note
-- Any decision notes created
-- Any person notes created or updated
-- Any client/business `_status.md` updated
-- The moved transcript file
-- Any inbox items created
+This single read-only gate checks declared YAML properties, required outgoing output links and the retained source's links, including when extraction stops before archival. Use the actual source path, which may already be under `system/transcripts/`. It rejects duplicate property keys, a meeting transcript stored as a YAML list instead of a wikilink string, and invalid attendee property types. It preserves legacy notes without frontmatter and is not a complete object-schema validator. Output-only verification does not satisfy this gate. A plain-text source path is not a wikilink; a note with no outgoing wikilinks fails completion. Zero broken required references is necessary, but does not prove factual correctness. Review attendee attribution, ownership and uncertainty separately. Record source identity, output paths, verification result and any remaining work in a processing receipt in the existing session-log note (source ID/hash, output paths, verification, remaining work).
 
-Zero broken required before declaring done. The script catches both `[[wikilinks]]` and backtick-style inbox references (`` `[ACTION] foo` ``).
+### 9. Mark complete, archive, and reconcile
+
+Use `config/scripts/complete-transcript.py` for this transition after the factual review in step 8. Do not independently set processing flags or move the source: the helper checks links before archiving, refuses an existing archive destination, checks again after the move, and records source/output hashes plus the actual transition order. Its receipts and original source snapshots live in the existing `system/session-log/` directory. Establish one active processing writer before invoking it; it does not provide a cross-host lock.
+
+Read `bash config/scripts/migrate.sh source-runtime` to obtain the host-local Python path and readiness. If missing, prepare it with `bash config/scripts/migrate.sh source-runtime --apply` when runtime installation is authorized. This installs pinned dependencies in an isolated environment, without replacing global Python packages. Use the returned `python` path for the commands below; do not silently fall back to a Python missing the required dependency.
+
+```bash
+"<runtime-python>" config/scripts/complete-transcript.py \
+  --vault "$PWD" --source "system/intake/<source>.md" \
+  --output "atlas/meetings/<meeting>.md" \
+  --output "<other-created-or-updated-knowledge-note>.md" \
+  --receipts "$PWD/system/session-log"
+```
+
+Repeat `--output` for the actual downstream knowledge notes; omit the second example argument if there are no additional notes. Record the returned receipt path in the session log. A no-content recording uses `--disposition no-content --reason "<source-grounded reason>"` with no `--output`; it still preserves the source and creates a completion receipt.
+
+Before skipping a source on retry, run `--vault "$PWD" --verify-receipt "<receipt-path>"` with the same helper. Changed source/output hashes or an incomplete receipt require reconciliation, not duplicate extraction. For an interrupted helper operation, `--vault "$PWD" --resume-receipt "<receipt-path>"` resumes only when the recorded source and outputs remain unchanged; it preserves the earlier receipt and recovery snapshots. A refusal means inspect both locations and preserve newer work. Do not restore old output notes just to make hashes match.
+
+Completion requires a successful helper receipt and current revalidation; `processed: true` or archive location alone is insufficient. The completion and receipt-verification paths repeat the declared-property checks as well as link checks. If a command fails, report the actual failed stage and leave the overall run incomplete. The helper verifies file state, declared properties and references, not factual accuracy or whether a no-content classification was justified.
 
 ### 10. Log
 
-Hook fires `source-processed` and `object-created` events automatically. No manual log entry needed.
+Finish the existing session-log processing record on both success and failure. Include:
+
+- Source identity/link and observed source hash.
+- Authoring agent/runtime; requested and reported model separately. Use `unknown` for unavailable model metadata rather than guessing from an alias.
+- Execution context (live workflow or synthetic fixture), attempted stage/command, observed exit code, and which provider or verification steps actually ran.
+- Output links and validated completion receipt, or an explicit incomplete state with no receipt.
+- Remaining work justified by the observed failure. A simulated error tests handling; it does not establish that a live account or operator configuration is broken.
+
+Preserve earlier attempts when adding a recovery result. Before returning, check that the record and final response agree about what ran, what changed and what remains.
+
+Tool hooks may record some file operations, but coverage depends on the runtime and tool used; the Python completion command is not recognized by the current semantic event hook. An event row is supplementary observability, not proof that processing or this handoff record is complete.
 
 ## Failure fallback
 
@@ -195,15 +237,15 @@ If `extract-transcript-gemini.sh` exits non-zero:
 |---|---|---|
 | 1 | Gemini API error (rate limit, malformed request, transient) | Retry once with a 5s backoff. If still failing, fall back to step 2. |
 | 2 | Hard failure (auth, prompt/schema missing, transcript unreadable) | Stop. Surface the error. No fallback — the operator needs to fix infra. |
-| 3 | Gemini output didn't parse as JSON | Retry once. If still failing, fall back to step 2. |
+| 3 | Provider response is incomplete or fails the extraction JSON contract | Retry once. If still failing, use the documented extraction fallback in step 2; do not treat the invalid response as a completed extraction. |
 
-**Step 2 (Sonnet fallback):** Delegate to the `knowledge-management` subagent with `model: sonnet`. Subagent prompt MUST be self-contained per the existing delegation pattern (see § Delegation pattern below). Sonnet does the full synthesis the way the pre-Gemini skill did — slower and more expensive, but reliable.
+**Step 2 (Sonnet fallback):** When that runtime and delegation capability are available and authorized, delegate to the `knowledge-management` subagent with `model: sonnet`. Give it the current prompt/schema and a self-contained task per the delegation pattern below. Preserve commitment status, uncertain identity/affiliation and source qualifications in every output. A fallback model is not presumed reliable: it must pass the same factual review, output verification and completion gates. If the configured fallback is unavailable, report that limitation rather than silently substituting another model.
 
 **If Sonnet also fails:** Stop, surface to the operator. Do not silently downgrade further.
 
 ## Delegation pattern (when Gemini fallback fires, or for batch processing)
 
-For long transcripts (≥500 utterances), batches of multiple transcripts, or when the operator wants to keep the main session light, delegate to a `knowledge-management` subagent with `model: sonnet`. Sonnet handles the extraction craft well at meaningfully lower cost than the main session's model.
+For long transcripts (≥500 utterances), batches, or an operator request to keep the main session light, use the configured `knowledge-management` / Sonnet delegation path when available and authorized. Otherwise use the supported sequential workflow and record its actual runtime; do not claim a delegated run occurred. Model choice does not relax the source or completion requirements.
 
 The subagent prompt MUST be fully self-contained — it sees zero of the main session's context. Required elements:
 
@@ -214,16 +256,16 @@ The subagent prompt MUST be fully self-contained — it sees zero of the main se
 5. **Client folder and active-project folder paths** for matching cross-updates.
 6. **Rule files to read** — `config/objects/meeting.md`, `config/rules/source-processing-pattern.md`, `config/rules/matching.md`, `config/rules/no-fabrication.md`, `config/rules/double-entry-knowledge.md`, `config/rules/writing-style.md`, plus this skill.
 7. **Known sensitive content** the meeting touches — so the agent sets `sensitive: true` proactively.
-8. **Required output schema** — what files to produce, what files to update, what to move, what to verify with check-wikilinks.
+8. **Required output schema and write ownership** — the current extraction schema including commitment status; exact allowed output paths; shared paths that must remain untouched; and the factual, property/link and completion-receipt checks from steps 8–9. Assign source completion to the coordinator in parallel mode.
 9. **Final-report shape** — speaker resolution summary, files produced/updated, anything unexpected, open items.
 
-The main session's role after dispatch: read both meeting notes end-to-end, spot-check matching, verify check-wikilinks ran clean.
+The main session's role after dispatch: read every resulting note against its source, review consequential matching updates and commitment qualifications, and verify the steps 8–9 evidence. A successful subagent return or clean link check alone does not establish completion.
 
 ### Parallel backlog mode
 
 The delegation above runs **one** subagent at a time (or sequentially). When the backlog is large — **≥10 unprocessed transcripts, or explicit operator request** — fan out to multiple subagents in parallel. Parallel writers with no file locking means last-writer-wins clobbering is a real hazard, so this mode trades raw parallelism for a strict ownership boundary. Do NOT use it for the normal interactive one-at-a-time flow — that stays simple and same-pass.
 
-**0. Extraction order is a hard sequence, stated per transcript.** Each parallel agent's prompt (or shared protocol file) must state the extraction order explicitly: attempt `extract-transcript-gemini.sh` first, retry once on failure, and only then fall back to direct synthesis — and must require the agent's manifest to report which path ran (`extraction: gemini | fallback`) so deviations are visible in review. Left implicit, agents read the fallback as optional-first and synthesize directly at roughly 5x the per-transcript cost (observed 2026-07-07: 1 of 10 agents skipped Gemini entirely).
+**0. Extraction order and failure handling match the sequential path.** Each parallel task must attempt `extract-transcript-gemini.sh` first and apply the exit-code-specific table above. Exit 2 stops that transcript without retry or fallback. Record the actual extraction path, requested/reported model, outcome and remaining work in its manifest. Preserve failed attempts; never treat fallback selection or a successful model return as factual acceptance.
 
 **1. Partition into disjoint clusters.** Group the transcripts so no two clusters are expected to touch the same entity (e.g. all of one client's meetings in one cluster; each team member's 1:1s in their own cluster). Build a quick preflight entity map (Glob `atlas/people/*`, `atlas/clients/*`, `gtd/projects/*`) so the partition is grounded, not guessed.
 
@@ -231,18 +273,20 @@ The delegation above runs **one** subagent at a time (or sequentially). When the
 - its meeting notes (`atlas/meetings/{date}-{slug}.md`)
 - its uniquely-named inbox/waiting items (`[ACTION]`/`[REVIEW]`/`[QUESTION]`/`[WAITING]`)
 - standalone decision notes with unique slugs
-- its own transcripts' frontmatter + the `mv` into `system/transcripts/` (after verification)
+- a processing record in the existing `system/session-log/` directory for its cluster
+
+Workers leave transcript bytes, processing flags and locations unchanged. The sequential coordinator owns completion through the helper after shared updates and factual review; workers never archive a source independently.
 
 Everything else is **shared and off-limits while fanning out** — by path, regardless of whether the agent thinks it "owns" the entity (agents can be wrong about identity):
 - any `atlas/clients/*/_status.md`, `atlas/businesses/*/_status.md`, `gtd/projects/*/_status.md`, any `_brief.md`
 - any person note that more than one cluster could touch
 - any shared index/state/log file
 
-**3. Shared updates come back as durable findings — not chat.** A parallel agent NEVER edits a shared file. It writes each needed change as a structured finding to a durable file (e.g. `system/_processing/findings/{run-id}/{agent}-{n}.md`), not just its final report — if the consolidation step dies, chat-only findings are lost. Each finding carries: `target_path`, `entity`, `source_meeting`, `source_transcript`, `date`, `proposed_text`, `reason`, `confidence`. If an agent discovers a cross-cluster entity mid-run (the partition was wrong), it stops writing that shared file and emits a finding flagging the overlap.
+**3. Shared updates come back as durable findings — not chat.** A parallel agent NEVER edits a shared file. It records each proposed update in its uniquely named processing note under the existing `system/session-log/` directory, not a new findings folder or only its final chat response. Each finding carries the target path, entity, source meeting/transcript identity and hash, source-supported occurrence date (unknown when absent), supporting source span, proposed text, unresolved qualifications and application status. If a cross-cluster entity is discovered, preserve both findings and flag the overlap for the coordinator.
 
-**4. One sequential consolidation pass.** After ALL parallel agents finish, a single agent (or the main session) applies every finding — one file at a time, **chronological by source-meeting date per target file** (per [[../../rules/matching]] § Conflicting information), deduping findings that target the same file + same source + same claim, and preserving genuine conflicts with source attribution (create a `[QUESTION]` only when state is actually ambiguous). Make it **idempotent**: each applied addition carries its source wikilink, so a re-run skips what's already present. Then run `check-wikilinks.sh` on every touched file.
+**4. One sequential consolidation pass.** After all workers have finished or stopped, the coordinator reconciles their actual outputs and source hashes. Apply only source-supported findings, one target at a time, ordered by known meeting occurrence dates per the matching rule. Do not invent chronology for undated sources. Compare the target's current contents before each update, preserve concurrent edits/conflicts, and deduplicate by source identity plus claim. Record applied, rejected and unresolved findings in the processing records. Repeating the pass must not create duplicate claims or commitments.
 
-**5. Manifest + reconciliation — "moved" ≠ "done".** Each agent returns a per-transcript manifest (processed / files created / files moved / findings emitted / verification result). Before declaring the run complete, reconcile by scanning BOTH `system/intake/` and `system/transcripts/`: a transcript counts as done only when `processed: true`, `processed-into:` is populated, its meeting note exists, and check-wikilinks passed — not merely because it landed in the archive folder. An agent that died mid-cluster can leave a note written but not moved, or moved with an incomplete `processed-into:` — the reconciliation scan is what catches it; re-dispatch the stragglers.
+**5. Completion is owned and verified per source.** Once all required downstream work for a source is complete and factually reviewed, the coordinator invokes the same `complete-transcript.py` transition as step 9, with every actual required output. Completion requires the helper receipt and current receipt revalidation, not flags, archive location or a worker manifest alone. For interrupted work, inspect both intake/archive locations and existing receipts, resume only missing work through the documented recovery path, and preserve newer outputs. Missing shared updates keep that source incomplete. An unsupported or ambiguous finding stays unresolved with a linked record; it is not silently applied or discarded to obtain a completion flag.
 
 ## Confidentiality
 
@@ -251,20 +295,17 @@ If the meeting note carries `sensitive: true` (set by Gemini or by operator flag
 - Any content draft proposed from this meeting must anonymize identifying details
 - Add a `[QUESTION]` if any insight is unusually identifiable and you're unsure whether it can be shared externally
 
-**Sensitive transcripts still go through the Gemini extraction path.** The data is already in WorkDesk OS (a third-party indexable surface). Sending the verbatim to Gemini's API doesn't materially change the trust posture, and the cost/latency savings are real. If you want a "Gemini-bypass for sensitive content" gate, add it explicitly via operator instruction — don't infer it from `sensitive: true`.
+Use the Gemini path within the operator's existing provider authorization and any applicable project restrictions. The sensitive flag does not by itself grant or revoke that authorization. Storing a transcript in the vault is not evidence that every external destination is permitted; carry explicit restrictions into delegated tasks.
 
-## Cost reference
+## Runtime evidence
 
-| Path | Cost per transcript | Latency | Quality |
-|---|---|---|---|
-| Gemini 3.1 Flash Lite + Claude integration (default) | ~$0.05-$0.10 | ~10-30s | Validated on Google Meet + Granola test set; high on name-resolved, partial on diarization |
-| Sonnet subagent (fallback) | ~$0.30-$0.50 | ~1-2 min | Reliable; less consistent on schema discipline |
-| Opus in main session | ~$1-$2 | ~2-5 min | Highest quality; reserved for sensitive/high-stakes when manually invoked |
+Record actual requested/reported model, token usage, elapsed time, extraction path and verification outcomes in the processing record. Missing provider metadata stays unknown. Historical timing, price estimates or model reputation are not current quality evidence; compare frozen evaluations for the actual runtime and skill revision before enabling automation.
 
 ## What NOT to do
 
 - **Don't fabricate attendees.** If Gemini returned a name not in the transcript, drop it. Per [[../../rules/no-fabrication]].
 - **Don't treat the Granola/Google `attendees-from-source` field as ground truth.** That's the calendar invite list, not actual presence. Use Gemini's `attendees_present` (which is grounded in transcript speaker turns).
+- **Gemini-import `calendar-invitees` records invitations, not attendance.** Preserve its supplied names, emails and response states as source metadata; do not infer names from email local parts or turn accepted invitations into presence. An empty `attendees-from-source` means attendance was not established by the importer, not that nobody attended. Check the transcript before accepting the extractor's attendance claims.
 - **Don't fill timeline gaps.** If the transcript jumps topics, don't reconstruct what was missed.
 - **Don't guess speaker names when Gemini returned `low` confidence.** Plain `Speaker X (unidentified)` + `[REVIEW]` beats fabrication.
 - **Don't create person notes for clients' clients** (homeowners, prospects, tertiary mentions). Per [[../../objects/person]] network-scope filter.

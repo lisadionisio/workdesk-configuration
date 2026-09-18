@@ -65,6 +65,7 @@ Action values and their meaning:
 | `removed-in-release` | Release removes this file; operator's copy stays | "No longer shipped: <path>" |
 | `operator-deleted-changed` | Operator deleted; release changed | Treat as conflict in phase 3 |
 | `operator-deleted-removed` | Operator deleted; release removed | (don't mention) |
+| `manual` | Target is a symlink; reconcile its ownership and destination before any apply | "This linked file needs a manual ownership check" |
 | `operator-only` | Operator's custom file, not in release | (don't mention; preserved) |
 
 Summarize like this — short, factual, one paragraph:
@@ -116,15 +117,17 @@ config/scripts/migrate.sh apply <staging> <vault>/.workdesk-migrate-tmp/resoluti
 
 Both paths come from the plan JSON (`staging`) and what you just wrote.
 
+Retain `reviewed-plan.json` in the staged package. Its target hashes bind resolutions to the reviewed files. Do not refresh a hash merely to force an old resolution through. If a target changed, preserve both versions and reconcile it first. A `manual` action stops apply before writes.
+
 The engine:
 1. Backs up `config/` to `<vault>/.workdesk-backups/<timestamp>/`
 2. Applies each file per the plan + resolutions
-3. Runs schema migrations in order (each one is `bash <script>` with `WORKDESK_VAULT` and `WORKDESK_WD` env vars)
+3. Runs applicable schema migrations in order, skipping versioned migrations already covered by the installed version and recording completed migration hashes for an interrupted retry
 4. Atomically swaps in the new `defaults/` snapshot
 5. Bumps `VERSION` last
 6. Prints a JSON result: `{"status":"applied","new_version":"1.3.0","backup_id":"2026-04-30-143022"}`
 
-If the engine fails at any step, it auto-restores from the backup before exiting non-zero. Surface the error to the operator and suggest re-running once the cause is fixed.
+On failure, read the actual result. A partial apply preserves snapshots and current files instead of blindly restoring over concurrent edits; VERSION does not advance. Record the affected paths, preserve later edits, and reconcile a per-file recovery or reviewed retry. Never report a rollback that did not happen.
 
 ### 4b. Sync Obsidian defaults
 
@@ -196,12 +199,18 @@ config/scripts/migrate.sh restore <backup-id>
 ## Failure recovery
 
 If the apply phase fails:
-- The engine has already restored from backup
-- Tell the operator: "The update couldn't apply cleanly. I rolled back. The error was: [verbatim engine error]. Want me to retry, or hold off?"
+- Preserve the backup and current files; inspect whether any files were already applied.
+- Tell the operator what actually changed, what failed, and the prepared recovery step. Do not claim an automatic rollback.
 - Do not retry automatically.
 
 If `check` fails (network, rate limit):
 - Tell the operator the cause in one sentence
 - Suggest waiting and re-running
 
-If migrations partially fail mid-stream, the engine restores `config/` from backup but does NOT undo schema-migration writes that already landed. This is rare (migrations are idempotent and tested in CI), but if it happens, surface the migration name and which file it last touched so the operator can review manually.
+A partially failed migration can leave changes even with the old VERSION. Surface the migration and affected files. Completed migration hashes are retained in staging; incomplete migrations must be safe to rerun. Never rerun obsolete global-state migrations merely because they are bundled in a newer release.
+
+## Operator-private distribution
+
+Use `migrate.sh private-overlay <package-dir>` to dry-run an enumerated private package, then append `--apply` within operator-authorized scope. The manifest records version and, per file, config-relative `target`, package-relative `source`, exact `ownership` (User config or User overrides of product), `before_sha256` (null for absent) and `after_sha256`. Ownership is checked against the existing product defaults. This mode never changes product VERSION/defaults, hooks, global paths or runtime state. It refuses changed targets, escaping paths, protected files and mismatched sources. Repeating an accepted package is a no-op.
+
+Recovery is per file: `migrate.sh private-overlay <receipt.json> --restore-file <config-relative-path> --apply` checks that the installed file has not changed, snapshots it, then restores its verified previous bytes. Added files have no prior snapshot and require a reviewed disposition; there is no implicit deletion. Protected safety installation remains the separate operator-run allowlisted adapter.

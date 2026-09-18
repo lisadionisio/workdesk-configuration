@@ -19,13 +19,13 @@ Hybrid semantic + keyword search over the vault's markdown files. Surfaces conce
 - `qmd query "topic"` — short, focused topic phrases work best for semantic search.
 - `qmd status` — check index health when results look stale.
 - Use `grep` for literal string searches; use `qmd` for "what notes are about this idea?"
-- Re-vectorization runs periodically to keep results fresh — see Connection notes.
+- Search freshness depends on an explicitly configured refresh process — see Connection notes.
 
 ## Connection notes
 
-**Install:** `brew install qmd` (or document the actual install path the operator uses).
+**Install:** Use the official npm package `@tobilu/qmd` with a reviewed version compatible with the host's Node runtime. Record the actual executable path and version per host; do not assume a Homebrew installation.
 
-**Verification:** `command -v qmd` succeeds AND `qmd status` returns healthy.
+**Verification:** Resolve `command -v qmd` in each supported runtime, confirm the intended vault collection path and scope, check indexed counts and embedding coverage, then retrieve a known note and compare it with its source. Package presence or a zero exit status alone is insufficient. Keep `connected: false` until the intended search use is verified.
 
 **Vectorization runner — open question.** qmd needs a periodic process to re-vectorize the vault as files change. Where the runner lives (`config/scripts/`? a launchd plist? cron?), how often it runs, and whether `/workdesk-doctor` checks freshness — TBD for V1.1. Tracked in `atlas/projects/workdesk/specs/onboarding-redesign.md` Open Items §7.
 

@@ -17,7 +17,7 @@ Daily operating cycle. Reads session-entry state, runs the daily-plan signal, su
 
 ### 1. Read session-entry state
 
-Read `config/state/session-entry.md`. Note the counts:
+Read the current host-local session-entry report named by SessionStart. If unavailable, run `bash config/scripts/session-entry-scan.sh` and read the report path in its JSON context. Do not use the historical shared `config/state/session-entry.md` as current evidence. Note the counts:
 - unprocessed transcripts
 - intake items
 - unsummarized session logs
@@ -41,7 +41,7 @@ Follow `config/signals/daily-plan.md`:
    - Surface stale work where `today - last-touched > 1.5 × expected-cadence`
    - For each `gtd/actions/waiting/` item, check whether it's unblocked or needs a nudge
 3. **Reason — GTD triage.** Assign every candidate a disposition (do-now / prioritize / delegate / defer / delete) and lead the plan with the 1–3 items that truly require the operator. See the signal's `## Reasoning — focus & GTD triage`.
-4. Apply sparse-data fallback chain (skip layers with no data)
+4. Apply the sparse-data fallback chain. Keep coverage evidence separately for each source: what was read (including its time window), its result, and any observed failure or missing context. Distinguish available, verified-empty, not-configured, unavailable, not-checked, and stale. Report only a failure cause supported by that source's result; leave the cause unknown otherwise. A calendar/CRM/search outage does not establish that local action, waiting, project or inbox notes are unreadable. Continue authorized local reads, and distinguish an absent supplied input or an out-of-scope read from a failed read. Never present unknown commitments as zero. Preserve useful vault-only output with an explicit coverage limit. Mark incomplete required coverage as partial. Preserve tentative intentions and proposed work as such; do not turn them into confirmed commitments.
 5. Apply tonality from `operator-profile.role` and `operator-profile.work-mode`. If `first-30-days-mode: active`, lean toward setup-oriented framing; otherwise neutral. If either field is empty (early state), default to neutral.
 
 Write to `intel/briefings/daily/{YYYY-MM-DD}-daily-plan.md` with the signal frontmatter:
@@ -56,11 +56,9 @@ schedule: daily
 ---
 ```
 
-Body sections per the declaration:
-1. Today's commitments + relevant context
-2. Projects to advance + where you left off
-3. Stalled items needing attention
-4. Inbox items awaiting triage (with backlog warning if >20)
+Before the body sections, include a compact Coverage summary of the sources used and material gaps, with evidence and a recovery step where known. Check each omission against its own source result; do not borrow another source's failure explanation.
+
+Use the declaration's complete output sections, including coverage, Focus, commitments, projects, actions/email, stalled work and inbox. The signal is the canonical output contract.
 
 ### 3. Surface
 
@@ -72,16 +70,18 @@ Print to chat (after the file is written):
 
 ### 4. Update state
 
-After successful write:
+After writing, verify source/context wikilinks with `bash config/scripts/check-wikilinks.sh --require-links <briefing-path>`. Plain-text paths and zero outgoing links do not satisfy the connection rule. Verify any newly created knowledge/inbox notes too. If required context is genuinely absent, report the gap and leave the run incomplete rather than fabricate a link.
+
+Only after successful write and verification with required source coverage:
 - `config/state/signals.json` → `daily-plan.last-fired` = today
 
-If write fails, do NOT update state. `/workdesk-doctor` trusts output files over state.
+If writing or required coverage is incomplete, do NOT advance `last-fired` as a successful run. Preserve the partial output with its coverage gaps so a later retry can distinguish it from success. `/workdesk-doctor` trusts output files over state. On refresh, preserve operator edits and review notes; stop on an unresolved concurrent edit rather than overwriting it.
 
 ## Auto-expiry side effect
 
 Daily-plan also cleans up expired inbox items as a side effect:
 - `[AWARENESS]` older than 7 days → archive to `gtd/inbox/_archive/{YYYY-MM}/`
-- `[QUESTION]` older than 14 days → archive
+- `[QUESTION]` remains active while unanswered, regardless of age. Archive only after a sourced resolution or explicit operator dismissal; preserve the resolution and its link. Age alone never resolves a question or truth conflict.
 
 `[REVIEW]` and `[ACTION]` never expire — operator clears.
 

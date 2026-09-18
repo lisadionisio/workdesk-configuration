@@ -6,6 +6,37 @@ This tool layer rides on top of the Infisical foundation (`config/rules/tools/in
 
 ## Access Method
 
+### Explicit account routing for API commands
+
+When the shell wrapper below is sourced, `gws ... --account EMAIL` selects an
+explicit account using the host-local `gws-accounts.json` under
+`WORKDESK_STATE_HOME` (default `~/.local/state/workdesk`). The wrapper also
+accepts `WORKDESK_GWS_ACCOUNT` or the legacy `GOOGLE_WORKSPACE_CLI_ACCOUNT`
+environment selector. An explicit flag wins over inherited selectors;
+duplicate flags fail. This selection is a wrapper feature, not a promise
+that the native binary honors the same flag.
+
+The map must contain an exact email key with either
+`{"mode":"legacy-account"}` for verified gws 0.4.1, or
+`{"mode":"config-dir","config_dir":"/absolute/existing/store"}` for
+verified gws 0.22.5. Keep this machine-specific map outside the synced vault.
+The wrapper removes competing credential selectors and verifies the Drive
+authenticated email before the requested API command. Unknown versions,
+missing routes and mismatched identities fail without running that command.
+The original arguments, output and exit status are preserved after routing.
+
+Calls without an account selector retain native default-account behavior.
+Jobs that launch the binary directly do not inherit this shell function;
+they must use the verified environment from `scripts/lib/gws_account.py`
+or their explicitly reviewed account adapter. Account verification does not
+authorize sending or mutation; the operator's operation-approval rules still
+apply.
+
+Authentication is separate: the login branch below retains the legacy flow.
+Do not use it as a modern multi-store OAuth setup procedure. Modern stores
+need their reviewed per-account setup, and the legacy token-push script does
+not establish backup coverage for modern keyring-backed credentials.
+
 CLI binary: `gws`, installed by `setup-gws.sh` via `brew install googleworkspace-cli` (preferred) or `npm install -g @googleworkspace/cli` (fallback). Both methods come from the official repo at https://github.com/googleworkspace/cli — do NOT `brew install gws`, which installs an unrelated git-workspaces tool of the same name.
 
 A shell wrapper at `config/shell/gws-env.sh` makes `gws auth login` pull the OAuth-app `client_id`/`client_secret` from Infisical at the moment of login — no env vars in your shell, no copy-pasting. Source from `~/.zshrc`:
@@ -94,6 +125,48 @@ If you skip the push, local gws keeps working — but Infisical's synced copy go
 `PERSONAL_GWS_ENCRYPTION_KEY` + any `PERSONAL_GWS_CREDENTIALS_<ORG>_ENC_B64` together are equivalent to plaintext access to that account's Gmail/Drive/Calendar. Anyone with read access to these two Infisical keys can impersonate your Workspace identity. Scope your personal Infisical project accordingly — it should be readable by you alone, never shared with contractors or client projects.
 
 ## Known Limitations
+
+### Transcript importer account selection
+
+`pull-gemini-transcripts.sh` also requires an explicit account and uses the
+same verified routing component. Its separate checkpoint and log directory is
+`${WORKDESK_STATE_HOME:-$HOME/.local/state/workdesk}/<vault-hash>/gemini-transcripts/<account-hash>/`.
+The old synced `config/state/pull-gemini.json` is preserved but never adopted
+automatically. Calendar pagination completes before source publication; failed
+pages, malformed page envelopes and repeated page tokens preserve prior success.
+Single-document recovery requires `--doc-id ID --force` and never advances
+enumeration progress. `--force` does not authorize replacing or duplicating an
+existing source in intake or the transcript archive: reconcile that source
+explicitly instead. Publication uses an atomic no-replace operation; an occupied
+destination is preserved and the staged candidate retained for review.
+Source identity is read only from frontmatter, including ordinary quoted IDs;
+mentions in transcript prose do not count. Duplicate ID records, unreadable
+inventories, symlinks or ambiguous identity syntax require reconciliation.
+Dry runs never change the checkpoint, including failures.
+This account boundary does not certify source publication, nested document
+coverage or the completeness of calendar attachment discovery.
+
+`pull-google-transcripts.sh` requires `--account you@example.com` or
+`WORKDESK_GWS_ACCOUNT`, plus the host-local route documented above. Set
+`WORKDESK_GWS_BIN` to the absolute executable when the scheduler's PATH does not
+include it. Every direct API call verifies that route and the authenticated
+principal through `config/scripts/lib/gws_account.py`; shell startup files are
+not required. This verifies identity, not approval for an outbound operation.
+
+Checkpoints and logs live under
+`${WORKDESK_STATE_HOME:-$HOME/.local/state/workdesk}/<vault-hash>/google-transcripts/<account-hash>/`.
+The checkpoint also records its account and rejects mismatches. Unattributed
+older checkpoints remain untouched and are not automatic fallbacks. Before
+cutover, reconcile the old checkpoint's account from execution evidence and
+choose an explicit initial lookback for each account. A new account defaults
+to one day; that is not historical coverage. A lookback above seven days needs
+`--backfill`. Keep one active scheduled owner and serialize runs for a vault.
+
+All listing pages must validate before any document export. A successful
+enumeration records its start time as the next watermark, with a one-second
+overlap on catch-up. `--dry-run` never changes checkpoints. A single-file pull
+requires both `--file-id` and `--force`; it never advances the enumeration
+watermark, and an existing note is preserved for explicit reconciliation.
 
 - **Pushes need a live Infisical session.** If your `infisical login` session has expired, push scripts log `FAILED to push` to `system/log/gws-push.log` and keep going — local gws is unaffected. Re-run `infisical login`, then the push.
 - **One OAuth app per Workspace org.** Each account's encrypted credential is self-contained (carries its own client_id/secret), so accounts from different orgs coexist in one gws install. `client_secret.json` and the wrapper's env-var injection only matter at `gws auth login` time — the wrapper picks the org's app from the `--account` email domain.

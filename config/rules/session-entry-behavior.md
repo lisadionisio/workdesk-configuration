@@ -4,7 +4,7 @@ When the SessionStart hook injects session-entry context (unprocessed transcript
 
 ## When this applies
 
-- The first turn of any Claude Code session where a SessionStart hook has injected `config/state/session-entry.md` context
+- The first turn of any Claude Code session where a SessionStart hook has injected a host-local session-entry report path
 - Any turn where session-entry context appears in a system reminder
 
 ## What to do
@@ -30,3 +30,5 @@ If none apply, no blurb.
 - Do not phrase the blurb as a question that requires an answer before proceeding ("Which would you like to start with?"). The blurb is a reminder; the work is the ask.
 - Do not repeat the blurb on subsequent turns within the same session. Once is enough.
 - Do not silently drop session-entry items the operator should know about. The blurb exists so they have the chance to redirect.
+
+The host-local report is derived state, not a shared outcome. Read the path emitted by the current SessionStart hook. The former `config/state/session-entry.md` is historical and must not be used as a current scan.

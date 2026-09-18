@@ -24,12 +24,13 @@ wd_resolve_secret() {
   source "$lib_dir/operator-config.sh" 2>/dev/null || true
 
   if [[ -n "${INFISICAL_PERSONAL_PROJECT_ID:-}" ]] && command -v infisical >/dev/null 2>&1; then
-    value="$(INFISICAL_DISABLE_UPDATE_CHECK=true infisical secrets get "$secret_name" \
+    if value="$(INFISICAL_DISABLE_UPDATE_CHECK=true infisical secrets get "$secret_name" \
       --projectId="$INFISICAL_PERSONAL_PROJECT_ID" --env=prod --plain \
-      </dev/null 2>/dev/null)" || true
-    if [[ -n "$value" ]]; then
-      printf '%s' "$value"
-      return 0
+      </dev/null 2>/dev/null)"; then
+      if [[ -n "$value" ]]; then
+        printf '%s' "$value"
+        return 0
+      fi
     fi
   fi
 
